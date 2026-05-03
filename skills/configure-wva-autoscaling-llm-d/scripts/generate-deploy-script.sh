@@ -28,6 +28,7 @@ MAX_REPLICAS="10"
 SCALE_UP_STABILIZATION="120"
 SCALE_DOWN_STABILIZATION="300"
 OUTPUT_FILE=""
+NON_INTERACTIVE="false"
 
 # Function to prompt for value
 prompt_value() {
@@ -102,6 +103,10 @@ while [[ $# -gt 0 ]]; do
             OUTPUT_FILE="$2"
             shift 2
             ;;
+        --non-interactive|-y)
+            NON_INTERACTIVE="true"
+            shift
+            ;;
         --help)
             echo "Usage: $0 [options]"
             echo ""
@@ -119,6 +124,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --scale-up-window <sec>      Scale-up stabilization (default: 120)"
             echo "  --scale-down-window <sec>    Scale-down stabilization (default: 300)"
             echo "  --output <file>              Output file (default: deploy-wva-<deployment>.sh)"
+            echo "  --non-interactive, -y        Skip all prompts and confirmations"
             echo "  --help                       Show this help message"
             exit 0
             ;;
@@ -130,28 +136,38 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Check if all required parameters are provided for non-interactive mode
+if [ "$NON_INTERACTIVE" = "false" ]; then
+    if [ -n "$NAMESPACE" ] && [ -n "$DEPLOYMENT_NAME" ] && [ -n "$WVA_REPO_PATH" ] && [ -n "$MODEL_ID" ]; then
+        NON_INTERACTIVE="true"
+    fi
+fi
+
 echo "=========================================="
 echo "WVA Deployment Script Generator"
 echo "=========================================="
 echo ""
 
-# Prompt for required values if not provided
-prompt_value NAMESPACE "Enter namespace" ""
-prompt_value DEPLOYMENT_NAME "Enter deployment name" ""
-prompt_value WVA_REPO_PATH "Enter WVA repository path" ""
-prompt_value MODEL_ID "Enter model ID" ""
+# Only prompt if in interactive mode
+if [ "$NON_INTERACTIVE" = "false" ]; then
+    # Prompt for required values if not provided
+    prompt_value NAMESPACE "Enter namespace" ""
+    prompt_value DEPLOYMENT_NAME "Enter deployment name" ""
+    prompt_value WVA_REPO_PATH "Enter WVA repository path" ""
+    prompt_value MODEL_ID "Enter model ID" ""
 
-# Prompt for optional values with defaults
-echo ""
-echo "Optional configuration (press Enter to use defaults):"
-prompt_value VARIANT_COST "Variant cost" "$VARIANT_COST"
-prompt_value PROMETHEUS_URL "Prometheus URL" ""
-prompt_value MIN_REPLICAS "Minimum replicas" "$MIN_REPLICAS"
-prompt_value MAX_REPLICAS "Maximum replicas" "$MAX_REPLICAS"
-prompt_value KV_CACHE_THRESHOLD "KV cache threshold" "$KV_CACHE_THRESHOLD"
-prompt_value QUEUE_LENGTH_THRESHOLD "Queue length threshold" "$QUEUE_LENGTH_THRESHOLD"
-prompt_value SCALE_UP_STABILIZATION "Scale-up stabilization (seconds)" "$SCALE_UP_STABILIZATION"
-prompt_value SCALE_DOWN_STABILIZATION "Scale-down stabilization (seconds)" "$SCALE_DOWN_STABILIZATION"
+    # Prompt for optional values with defaults
+    echo ""
+    echo "Optional configuration (press Enter to use defaults):"
+    prompt_value VARIANT_COST "Variant cost" "$VARIANT_COST"
+    prompt_value PROMETHEUS_URL "Prometheus URL" ""
+    prompt_value MIN_REPLICAS "Minimum replicas" "$MIN_REPLICAS"
+    prompt_value MAX_REPLICAS "Maximum replicas" "$MAX_REPLICAS"
+    prompt_value KV_CACHE_THRESHOLD "KV cache threshold" "$KV_CACHE_THRESHOLD"
+    prompt_value QUEUE_LENGTH_THRESHOLD "Queue length threshold" "$QUEUE_LENGTH_THRESHOLD"
+    prompt_value SCALE_UP_STABILIZATION "Scale-up stabilization (seconds)" "$SCALE_UP_STABILIZATION"
+    prompt_value SCALE_DOWN_STABILIZATION "Scale-down stabilization (seconds)" "$SCALE_DOWN_STABILIZATION"
+fi
 
 # Set output file if not specified
 if [ -z "$OUTPUT_FILE" ]; then
@@ -177,10 +193,13 @@ echo "Output File:            $OUTPUT_FILE"
 echo "=========================================="
 echo ""
 
-read -p "Generate deployment script? (y/n): " confirm
-if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-    echo "Cancelled."
-    exit 0
+# Only ask for confirmation in interactive mode
+if [ "$NON_INTERACTIVE" = "false" ]; then
+    read -p "Generate deployment script? (y/n): " confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "Cancelled."
+        exit 0
+    fi
 fi
 
 # Generate script from template
