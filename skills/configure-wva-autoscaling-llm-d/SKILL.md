@@ -165,8 +165,14 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
    - Current replicas, existing HPA
    - Accelerator type
 
-2. **Ask user for:**
+2. **ALWAYS ask user for:**
    - **Scaling backend**: HPA or KEDA
+     - **CRITICAL**: Always ask which backend the user prefers
+     - **If HPA is preferable for their llm-d deployment, explain why:**
+       - HPA is built into Kubernetes (no additional dependencies)
+       - HPA is simpler to configure and troubleshoot
+       - HPA is recommended for most llm-d deployments unless specific KEDA features are needed (e.g., event-driven scaling from external sources)
+       - KEDA adds complexity but provides more scaling sources (Kafka, RabbitMQ, etc.)
    - **Scaling behavior**: Fast/balanced/cost-optimized
    - **Stabilization windows**: Scale-up (default 120s, range 0-300s), Scale-down (default 300s, range 120-600s)
    - **Replica limits**: minReplicas, maxReplicas
@@ -213,8 +219,14 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 | **Scale-to-Zero** | Dev/test cost savings | [example4](scripts/configs/example4-scale-to-zero.yaml) | `minReplicas: 0`, requires alpha feature gate |
 
 **Configuration Rules:**
-- Include `inference.optimization/acceleratorName` label on deployments
-- HPA selector must match `variant_name` + `exported_namespace`
+- **CRITICAL**: Include `inference.optimization/acceleratorName` label on deployments (e.g., `nvidia`, `amd`, `cpu`)
+  - Without this label, WVA controller will NOT detect the VariantAutoscaling resource
+  - Add to deployment: `kubectl label deployment <name> -n <namespace> inference.optimization/acceleratorName=nvidia`
+- **CRITICAL**: HPA selector must match BOTH labels: `variant_name` + `exported_namespace`
+  - `variant_name` must match the VariantAutoscaling resource name
+  - `exported_namespace` must match the deployment namespace
+- **CRITICAL**: `variantCost` must be a STRING, not an integer (e.g., `"100"` not `100`)
+- **CRITICAL**: API version must be `llmd.ai/v1alpha1` (NOT `inference.llmd.ai/v1alpha1`)
 - Multi-variant: WVA scales cheaper variants first based on `variantCost`
 - Align thresholds with Inference Scheduler (EPP) - see section 4
 
@@ -237,11 +249,11 @@ See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed examples.
 
 **Single Source of Truth**: All deployment scripts in WVA repository (`${WVA_REPO_PATH}`).
 
-**IMPORTANT - Two-Phase Process:**
+**IMPORTANT - Deployment Methods:**
 
-### Phase 1: Deploy WVA Controller (Infrastructure)
+### Method 1: Makefile Deployment (Requires Go)
 
-This phase deploys the WVA controller infrastructure with **default/generic settings**. The user-specific configuration from Section 2 is applied in Phase 2.
+**Prerequisites**: Go must be installed on the system.
 
 ```bash
 cd ${WVA_REPO_PATH}
@@ -259,35 +271,180 @@ make deploy-wva-emulated-on-kind
 make deploy-e2e-infra ENVIRONMENT=kubernetes
 ```
 
+### Method 2: Helm Deployment (Recommended - No Go Required)
+
+**Use Helm when Go is not available or for simpler deployments:**
+
+```bash
+cd ${WVA_REPO_PATH}
+
+# Basic deployment
+helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system \
+  --create-namespace
+
+# Namespace-scoped deployment (RECOMMENDED)
+# CRITICAL: Use values.yaml to set watchNamespace, NOT environment variables
+# The config file overrides environment variables
+helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system \
+  --create-namespace \
+  --set controller.watchNamespace=<your-namespace>
+
+# Or create a values file:
+cat > wva-values.yaml <<EOF
+controller:
+  watchNamespace: <your-namespace>
+EOF
+
+helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system \
+  --create-namespace \
+  -f wva-values.yaml
+```
+
+**CRITICAL Configuration Notes:**
+- **DO NOT** set `WATCH_NAMESPACE` via environment variable - it will be overridden by the config file
+- **ALWAYS** use Helm values or edit the ConfigMap directly to set namespace scoping
+- After deployment, verify the controller is watching the correct namespace in logs
+
+**IMPORTANT - Three-Phase Process:**
+
+### Phase 1: Deploy WVA Controller (Infrastructure)
+
+This phase deploys the WVA controller infrastructure with **default/generic settings**. The user-specific configuration from Section 2 is applied in Phase 2.
+
 **What gets deployed in Phase 1:**
 - WVA controller with default settings
 - Prometheus (if not already present)
 - Scaler backend (HPA or KEDA)
 - Default ConfigMaps with standard thresholds
 
-### Phase 2: Apply User-Specific Configuration
+### Phase 2: Prepare Deployment for WVA
 
-After Phase 1 completes, apply the configuration built in Section 2 based on user requirements:
+**CRITICAL**: Before applying VariantAutoscaling, ensure the deployment has required labels and metrics:
 
 ```bash
-# 1. Apply VariantAutoscaling resource (built from user input in Section 2)
-kubectl apply -f <generated-variantautoscaling>.yaml
+# 1. Add required accelerator label to deployment
+kubectl label deployment <deployment-name> -n <namespace> \
+  inference.optimization/acceleratorName=nvidia
 
-# 2. Apply HPA with user-specified stabilization windows
-kubectl apply -f <generated-hpa>.yaml
+# 2. Ensure vLLM metrics are exposed (if not already)
+# Create Service for metrics endpoint
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: <deployment-name>-metrics
+  namespace: <namespace>
+spec:
+  selector:
+    app: <deployment-name>
+  ports:
+  - name: metrics
+    port: 8000
+    targetPort: 8000
+EOF
 
-# 3. Update saturation thresholds if user requested custom values
+# 3. Create ServiceMonitor for Prometheus scraping
+kubectl apply -f - <<EOF
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: <deployment-name>-metrics
+  namespace: <namespace>
+spec:
+  selector:
+    matchLabels:
+      app: <deployment-name>
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+EOF
+```
+
+### Phase 3: Apply User-Specific Configuration
+
+After Phase 1 and 2 complete, apply the configuration built in Section 2 based on user requirements:
+
+```bash
+# 1. Apply saturation thresholds ConfigMap (if custom values needed)
 kubectl apply -f <generated-saturation-config>.yaml
 
-# 4. Verify configuration
+# 2. Apply VariantAutoscaling resource (built from user input in Section 2)
+kubectl apply -f <generated-variantautoscaling>.yaml
+
+# 3. Apply HPA with user-specified stabilization windows
+kubectl apply -f <generated-hpa>.yaml
+
+# 4. Verify WVA detects the resource
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
+
+# 5. Verify configuration
 ./scripts/verify-wva.sh <namespace>
 ```
 
 **Configuration Flow:**
 1. Section 2: Gather user requirements and auto-detect deployment details
 2. Phase 1: Deploy WVA infrastructure (generic)
-3. Phase 2: Apply user-specific VariantAutoscaling, HPA, and threshold configs
-4. Verification: Ensure everything works as expected
+3. Phase 2: Prepare deployment with labels and metrics
+4. Phase 3: Apply user-specific VariantAutoscaling, HPA, and threshold configs
+5. Verification: Ensure WVA detects resources and scaling works
+### Immediate Verification After Each Phase
+
+**CRITICAL**: Verify each phase before proceeding to the next.
+
+**Phase 1 Verification (WVA Controller)**:
+```bash
+# Check controller is running
+kubectl get deployment -n workload-variant-autoscaler-system
+
+# Verify namespace-scoping is correct
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
+# Should show: "Watching single namespace: <your-namespace>"
+```
+
+**Phase 2 Verification (Deployment Preparation)**:
+```bash
+# Verify accelerator label was added
+kubectl get deployment <name> -n <namespace> --show-labels | grep acceleratorName
+
+# Verify metrics infrastructure exists
+kubectl get service,servicemonitor -n <namespace> | grep metrics
+
+# Test metrics endpoint
+kubectl exec -n <namespace> <pod-name> -- curl -s localhost:8000/metrics | grep vllm
+```
+
+**Phase 3 Verification (Configuration Applied)**:
+```bash
+# Check resources were created
+kubectl get variantautoscaling,hpa -n <namespace>
+
+# CRITICAL: Verify WVA detected the VariantAutoscaling
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
+# Should NOT show "No active VariantAutoscalings found"
+
+# Check METRICSREADY status (wait 2 minutes for Prometheus scrape)
+sleep 120
+kubectl get variantautoscaling -n <namespace>
+# Should show METRICSREADY: True
+```
+
+### Success Metrics
+
+A successful WVA deployment should show:
+- ✅ WVA controller logs show "VariantAutoscaling" detected (not "No active VariantAutoscalings found")
+- ✅ METRICSREADY: True within 2 minutes
+- ✅ HPA shows valid metrics (not <unknown>)
+- ✅ Deployment scales up under load
+- ✅ Deployment scales down after stabilization window
+- ✅ No error messages in WVA controller logs
+
 
 ### Upgrading WVA
 
@@ -382,21 +539,119 @@ See [`Troubleshooting.md`](./Troubleshooting.md) and [`scripts/SCRIPTS.md`](./sc
 6. **Cost optimization**: For multi-variant setups, set variantCost accurately to reflect actual costs
 7. **Scale-to-zero**: Only enable in dev/test environments, not production (cold start latency)
 
+## Deployment Script Creation
+
+**IMPORTANT**: At the end of configuration, create a deployment script that automates the entire WVA setup process.
+
+The script should include:
+1. WVA controller deployment (Helm or Makefile)
+2. Adding required labels to deployment
+3. Creating Service and ServiceMonitor for metrics
+4. Applying ConfigMaps, VariantAutoscaling, and HPA
+5. Verification steps
+
+Example script structure:
+```bash
+#!/bin/bash
+set -e
+
+# Configuration
+NAMESPACE="<namespace>"
+DEPLOYMENT="<deployment-name>"
+WVA_REPO="<path-to-wva-repo>"
+
+# Phase 1: Deploy WVA controller
+echo "Deploying WVA controller..."
+helm upgrade --install workload-variant-autoscaler ${WVA_REPO}/charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system \
+  --create-namespace \
+  --set controller.watchNamespace=${NAMESPACE}
+
+# Phase 2: Prepare deployment
+echo "Adding required labels..."
+kubectl label deployment ${DEPLOYMENT} -n ${NAMESPACE} \
+  inference.optimization/acceleratorName=nvidia --overwrite
+
+echo "Creating metrics Service and ServiceMonitor..."
+kubectl apply -f service-metrics.yaml
+kubectl apply -f servicemonitor-metrics.yaml
+
+# Phase 3: Apply configurations
+echo "Applying WVA configurations..."
+kubectl apply -f configmap-saturation.yaml
+kubectl apply -f variantautoscaling.yaml
+kubectl apply -f hpa.yaml
+
+# Verification
+echo "Verifying deployment..."
+kubectl get variantautoscaling -n ${NAMESPACE}
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler --tail=50
+```
+
+## Optional: Testing WVA Autoscaling
+
+**IMPORTANT**: After deployment, ask the user if they want to test the autoscaling behavior.
+
+If the user wants to test:
+
+```bash
+# 1. Check current replica count
+kubectl get deployment <deployment-name> -n <namespace>
+
+# 2. Send inference requests to trigger scaling
+# Option A: Using curl
+for i in {1..100}; do
+  curl -X POST http://<gateway-url>/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+      "model": "<model-id>",
+      "messages": [{"role": "user", "content": "Generate a long story about..."}],
+      "max_tokens": 1000
+    }' &
+done
+
+# Option B: Using llm-d-benchmark (if available)
+cd ${LLMD_BENCHMARK_REPO}
+# Use benchmark templates from deployments/*/benchmark-templates/
+
+# 3. Monitor scaling in real-time
+watch -n 5 'kubectl get variantautoscaling,hpa,deployment -n <namespace>'
+
+# 4. Check WVA scaling decisions
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler -f | grep "desired replicas"
+
+# 5. Verify replicas increased
+kubectl get deployment <deployment-name> -n <namespace>
+```
+
+**Expected behavior:**
+- KV cache saturation or queue depth should increase
+- WVA should calculate desired replicas > current replicas
+- HPA should scale up the deployment
+- After load stops, deployment should scale down (after stabilization window)
+
 ## Output Format
 
 When helping users configure WVA:
 
-1. **Ask clarifying questions** about their requirements
+1. **Ask clarifying questions** about their requirements (especially scaling backend preference)
 2. **Provide specific YAML configurations** based on their needs
-3. **Explain the reasoning** behind configuration choices
-4. **Include monitoring commands** to verify the setup
-5. **Link to relevant documentation** for deeper understanding
+3. **Explain the reasoning** behind configuration choices (e.g., why HPA is recommended)
+4. **Create a deployment script** to automate the setup
+5. **Include monitoring commands** to verify the setup
+6. **Offer optional testing** to validate autoscaling behavior
+7. **Link to relevant documentation** for deeper understanding
 
 **Do not**:
-- Create new automation scripts (use existing ones)
-- Provide generic configurations without understanding requirements
+- Skip asking about scaling backend preference
+- Assume HPA without explaining why it's recommended
+- Create generic configurations without understanding requirements
 - Skip threshold alignment with EPP
 - Forget to explain the "why" behind configurations
+- Create comprehensive README files (user doesn't want them)
+- Stop at just creating scripts/configs - **actually deploy to the user's llm-d deployment**
 
 ## Online Resources
 

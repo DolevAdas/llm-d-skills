@@ -20,7 +20,182 @@ kubectl get hpa -n <namespace>
 kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/wva_desired_replicas" | jq
 ```
 
-## Common Issues
+## Common Troubleshooting Patterns
+
+**Use these patterns first** - they cover 90% of WVA issues and provide quick resolution steps.
+
+### Pattern 1: "No active VariantAutoscalings found"
+
+**Symptoms**: WVA controller logs show this message even though VariantAutoscaling resource exists.
+
+**Quick Diagnosis Checklist**:
+1. ✅ Check accelerator label on deployment (MOST COMMON)
+2. ✅ Verify API version is `llmd.ai/v1alpha1`
+3. ✅ Check variantCost is string (e.g., `"100"`)
+4. ✅ Verify namespace-scoping configuration
+
+**Resolution Steps**:
+```bash
+# Step 1: Add accelerator label (MOST COMMON FIX)
+kubectl label deployment <name> -n <namespace> \
+  inference.optimization/acceleratorName=nvidia --overwrite
+
+# Step 2: Verify API version
+kubectl get variantautoscaling -n <namespace> -o yaml | grep apiVersion
+# Must be: llmd.ai/v1alpha1 (NOT inference.llmd.ai/v1alpha1)
+
+# Step 3: Check variantCost type
+kubectl get variantautoscaling -n <namespace> -o yaml | grep variantCost
+# Must be string: "100" not 100
+
+# Step 4: Verify namespace-scoping
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
+
+# Step 5: Restart controller after fixes
+kubectl rollout restart deployment -n workload-variant-autoscaler-system \
+  workload-variant-autoscaler-controller-manager
+
+# Step 6: Verify WVA now detects the resource
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
+```
+
+### Pattern 2: METRICSREADY: False
+
+**Symptoms**: VariantAutoscaling shows `METRICSREADY: False` status.
+
+**Quick Diagnosis Checklist**:
+1. ✅ Wait 2 minutes for Prometheus scrape interval
+2. ✅ Check Service and ServiceMonitor exist
+3. ✅ Verify metrics endpoint is accessible
+4. ✅ Send test traffic to generate metrics
+
+**Resolution Steps**:
+```bash
+# Step 1: Wait for Prometheus scrape (most common - just need patience)
+sleep 120 && kubectl get variantautoscaling -n <namespace>
+
+# Step 2: Check metrics infrastructure exists
+kubectl get service,servicemonitor -n <namespace> | grep metrics
+
+# Step 3: Test metrics endpoint directly
+kubectl exec -n <namespace> <pod-name> -- curl -s localhost:8000/metrics | grep vllm
+
+# Step 4: If no metrics, create Service and ServiceMonitor
+# See Issue #2 below for full YAML examples
+
+# Step 5: Send test traffic to generate metrics
+curl -X POST http://<gateway-url>/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "<model-id>", "messages": [{"role": "user", "content": "test"}]}'
+
+# Step 6: Check again after 2 minutes
+sleep 120 && kubectl get variantautoscaling -n <namespace>
+```
+
+### Pattern 3: Not Scaling
+
+**Symptoms**: Replicas don't change despite load, HPA shows metrics but no scaling action.
+
+**Quick Diagnosis Checklist**:
+1. ✅ Check current saturation levels
+2. ✅ Verify HPA selector matches variant_name and exported_namespace
+3. ✅ Check stabilization windows aren't too long
+4. ✅ Review WVA controller logs for scaling decisions
+
+**Resolution Steps**:
+```bash
+# Step 1: Check current saturation levels
+kubectl get variantautoscaling -n <namespace> -o yaml | grep -A 5 status
+# Look for kvCacheSaturation and queueDepthSaturation values
+
+# Step 2: Verify HPA selector matches
+kubectl get hpa -n <namespace> -o yaml | grep -A 5 metricSelector
+# Must match: variant_name=<va-name> AND exported_namespace=<namespace>
+
+# Step 3: Check WVA scaling decisions
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "desired replicas"
+
+# Step 4: Check HPA status
+kubectl describe hpa -n <namespace>
+# Look for "unable to get metric" or other errors
+
+# Step 5: If saturation never reached, lower thresholds
+kubectl edit configmap -n workload-variant-autoscaler-system \
+  wva-saturation-scaling-config
+# Try: kvCacheThreshold: "0.70" (from 0.80)
+
+# Step 6: If stabilization too long, adjust HPA
+kubectl edit hpa -n <namespace>
+# Reduce scaleUp/scaleDown stabilizationWindowSeconds
+```
+
+## Detailed Common Issues
+
+### 0. WVA Controller Not Detecting VariantAutoscaling Resource
+
+**Symptoms**:
+- WVA controller logs show "No active VariantAutoscalings found"
+- VariantAutoscaling resource exists but WVA doesn't see it
+- Controller watching wrong namespace
+
+**Common Causes**:
+- **Missing accelerator label on deployment** (MOST COMMON)
+- Wrong API version in VariantAutoscaling YAML
+- Namespace-scoping configuration not working
+- Config file overriding environment variables
+
+**Solutions**:
+
+```bash
+# 1. CRITICAL: Add required accelerator label to deployment
+kubectl label deployment <deployment-name> -n <namespace> \
+  inference.optimization/acceleratorName=nvidia --overwrite
+
+# 2. Verify the label was added
+kubectl get deployment <deployment-name> -n <namespace> --show-labels | grep acceleratorName
+
+# 3. Check VariantAutoscaling API version (must be llmd.ai/v1alpha1)
+kubectl get variantautoscaling -n <namespace> -o yaml | grep apiVersion
+# Should show: apiVersion: llmd.ai/v1alpha1
+# NOT: apiVersion: inference.llmd.ai/v1alpha1
+
+# 4. Verify variantCost is a string, not integer
+kubectl get variantautoscaling -n <namespace> -o yaml | grep variantCost
+# Should show: variantCost: "100"
+# NOT: variantCost: 100
+
+# 5. Check which namespace WVA is watching
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
+
+# 6. If namespace-scoping not working, check ConfigMap (NOT environment variable)
+kubectl get configmap -n workload-variant-autoscaler-system \
+  wva-variantautoscaling-config -o yaml
+
+# 7. Fix namespace-scoping via Helm values (CORRECT WAY)
+helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system \
+  --set controller.watchNamespace=<your-namespace> \
+  --reuse-values
+
+# 8. Restart WVA controller after fixes
+kubectl rollout restart deployment -n workload-variant-autoscaler-system \
+  workload-variant-autoscaler-controller-manager
+
+# 9. Verify WVA now detects the resource
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
+```
+
+**Configuration Fixes**:
+- **ALWAYS add `inference.optimization/acceleratorName` label before creating VariantAutoscaling**
+- Use correct API version: `llmd.ai/v1alpha1`
+- Use string for `variantCost`: `"100"` not `100`
+- Set namespace-scoping via Helm values or ConfigMap, NOT environment variables
+- The config file overrides `WATCH_NAMESPACE` environment variable
 
 ### 1. METRICSREADY: False
 
@@ -52,7 +227,68 @@ kubectl get podmonitor -n <namespace>
 kubectl get pods -n <namespace> --show-labels
 ```
 
-### 2. WVA Not Scaling
+### 2. Missing Metrics Service and ServiceMonitor
+
+**Symptoms**:
+- Prometheus not scraping vLLM metrics
+- No metrics available for WVA
+- METRICSREADY stays False even after waiting
+
+**Common Causes**:
+- No Service exposing vLLM metrics port (8000)
+- No ServiceMonitor configured for Prometheus
+- ServiceMonitor selector not matching pod labels
+
+**Solutions**:
+
+```bash
+# 1. Check if Service exists for metrics
+kubectl get service -n <namespace> | grep metrics
+
+# 2. Create Service for vLLM metrics endpoint
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: <deployment-name>-metrics
+  namespace: <namespace>
+  labels:
+    app: <deployment-name>
+spec:
+  selector:
+    app: <deployment-name>
+  ports:
+  - name: metrics
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+EOF
+
+# 3. Create ServiceMonitor for Prometheus
+kubectl apply -f - <<EOF
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: <deployment-name>-metrics
+  namespace: <namespace>
+spec:
+  selector:
+    matchLabels:
+      app: <deployment-name>
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+EOF
+
+# 4. Verify ServiceMonitor is created
+kubectl get servicemonitor -n <namespace>
+
+# 5. Check if Prometheus is scraping
+kubectl exec -n <namespace> <pod-name> -- curl -s localhost:8000/metrics | grep vllm
+```
+
+### 3. WVA Not Scaling
 
 **Symptoms**: Replicas don't change despite load
 
@@ -85,7 +321,7 @@ kubectl get variantautoscaling -n <namespace> -o yaml | grep "name:"
 - Reduce HPA stabilization windows
 - Ensure HPA variant_name label matches VariantAutoscaling name
 
-### 3. Frequent Scaling (Flapping)
+### 4. Frequent Scaling (Flapping)
 
 **Symptoms**: Replicas constantly scaling up and down
 
@@ -111,7 +347,7 @@ watch -n 5 'kubectl get variantautoscaling -n <namespace>'
 - Align WVA and EPP thresholds
 - Adjust spare capacity triggers (lower kvSpareTrigger)
 
-### 4. Wrong Deployment Target
+### 5. Wrong Deployment Target
 
 **Symptoms**: VariantAutoscaling exists but doesn't affect deployment
 
@@ -133,7 +369,7 @@ kubectl get variantautoscaling -n <namespace> -o yaml | grep -A 3 scaleTargetRef
 kubectl edit variantautoscaling -n <namespace> <name>
 ```
 
-### 5. Prometheus Connection Issues
+### 6. Prometheus Connection Issues
 
 **Symptoms**: WVA controller logs show Prometheus errors
 
@@ -158,7 +394,7 @@ kubectl exec -n workload-variant-autoscaler-system \
 # Update WVA config to use: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
 ```
 
-### 6. Scale-to-Zero Not Working
+### 7. Scale-to-Zero Not Working
 
 **Symptoms**: Replicas don't scale to zero despite idle period
 
@@ -189,7 +425,7 @@ kubectl logs -n workload-variant-autoscaler-system \
 - Enable scale-to-zero in WVA Helm values or ConfigMap
 - Adjust retention period if needed
 
-### 7. Multi-Variant Cost Optimization Not Working
+### 8. Multi-Variant Cost Optimization Not Working
 
 **Symptoms**: WVA scales expensive variant instead of cheap one
 
@@ -197,6 +433,8 @@ kubectl logs -n workload-variant-autoscaler-system \
 - variantCost not set or set incorrectly
 - All variants have same cost
 - Cheap variant at maxReplicas
+
+
 - Model IDs don't match
 
 **Solutions**:
@@ -216,6 +454,90 @@ kubectl get variantautoscaling -n <namespace>
 - Set different variantCost values (e.g., H100: "80.0", A100: "40.0")
 - Ensure model IDs are identical across variants
 - Increase maxReplicas on cheaper variant
+
+### 9. Namespace-Scoping Not Working
+
+**Symptoms**:
+- WVA controller watching wrong namespace
+- Controller logs show "Watching single namespace: workload-variant-autoscaler-system"
+- Setting WATCH_NAMESPACE environment variable has no effect
+
+**Root Cause**:
+- The WVA config file overrides the `WATCH_NAMESPACE` environment variable
+- Setting env var directly doesn't work
+
+**Solutions**:
+
+```bash
+# WRONG WAY (doesn't work):
+kubectl set env deployment/workload-variant-autoscaler-controller-manager \
+  -n workload-variant-autoscaler-system \
+  WATCH_NAMESPACE=<your-namespace>
+
+# CORRECT WAY 1: Use Helm values
+helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system \
+  --set controller.watchNamespace=<your-namespace> \
+  --reuse-values
+
+# CORRECT WAY 2: Edit ConfigMap directly
+kubectl edit configmap -n workload-variant-autoscaler-system \
+  wva-variantautoscaling-config
+# Add or modify: WATCH_NAMESPACE: "<your-namespace>"
+
+# After changing ConfigMap, restart controller
+kubectl rollout restart deployment -n workload-variant-autoscaler-system \
+  workload-variant-autoscaler-controller-manager
+
+# Verify namespace-scoping is working
+kubectl logs -n workload-variant-autoscaler-system \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
+# Should show: "Watching single namespace: <your-namespace>"
+```
+
+**Key Takeaway**: Always use Helm values or ConfigMap to set namespace-scoping, never environment variables.
+
+### 10. Wrong API Version or variantCost Type
+
+**Symptoms**:
+- VariantAutoscaling resource fails to create
+- Validation errors about API version
+- WVA controller doesn't recognize the resource
+
+**Common Causes**:
+- Using wrong API group: `inference.llmd.ai/v1alpha1` instead of `llmd.ai/v1alpha1`
+- Using integer for `variantCost` instead of string
+
+**Solutions**:
+
+```bash
+# Check current API version
+kubectl get variantautoscaling -n <namespace> -o yaml | grep apiVersion
+
+# If wrong, delete and recreate with correct version
+kubectl delete variantautoscaling <name> -n <namespace>
+
+# Create with correct API version and variantCost type
+kubectl apply -f - <<EOF
+apiVersion: llmd.ai/v1alpha1  # CORRECT
+kind: VariantAutoscaling
+metadata:
+  name: <name>
+  namespace: <namespace>
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: <deployment-name>
+  modelID: <model-id>
+  variantCost: "100"  # MUST be string, not integer
+  minReplicas: 2
+  maxReplicas: 10
+EOF
+```
+
+**Configuration Rules**:
+- API version: `llmd.ai/v1alpha1` (NOT `inference.llmd.ai/v1alpha1`)
+- `variantCost`: Must be string (e.g., `"100"` not `100`)
 
 ## Threshold Tuning Guide
 
