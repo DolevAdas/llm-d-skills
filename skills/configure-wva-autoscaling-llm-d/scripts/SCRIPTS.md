@@ -42,14 +42,14 @@ The scripts in this directory provide:
 **Example**:
 ```bash
 ./generate-deploy-script.sh \
-  --namespace dolev-inf \
-  --deployment qwen32-dolev-inf \
+  --namespace example-namespace \
+  --deployment my-llm-deployment \
   --wva-repo /path/to/wva-repo \
   --model-id "Qwen/Qwen3-32B" \
   --variant-cost "100" \
   --min-replicas 2 \
   --max-replicas 10 \
-  --output deploy-wva-qwen32.sh
+  --output deploy-wva-example.sh
 ```
 
 **What it does**:
@@ -102,7 +102,7 @@ The scripts in this directory provide:
 
 **Example**:
 ```bash
-./test-wva-scaling.sh dolev-inf qwen32-dolev-inf "Qwen/Qwen3-32B" 100
+./test-wva-scaling.sh example-namespace my-llm-deployment "Qwen/Qwen3-32B" 100
 ```
 
 **What it does**:

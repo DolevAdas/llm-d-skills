@@ -17,7 +17,7 @@ if [ $# -lt 2 ]; then
     echo "Usage: $0 <namespace> <deployment-name> [model-id] [num-requests]"
     echo ""
     echo "Example:"
-    echo "  $0 dolev-inf qwen32-dolev-inf \"Qwen/Qwen3-32B\" 100"
+    echo "  $0 example-namespace my-llm-deployment \"Qwen/Qwen3-32B\" 100"
     exit 1
 fi
 

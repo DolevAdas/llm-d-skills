@@ -18,7 +18,7 @@ if [ $# -lt 3 ]; then
     echo "Usage: $0 <namespace> <deployment-name> <wva-repo-path> [model-id] [variant-cost]"
     echo ""
     echo "Example:"
-    echo "  $0 dolev-inf qwen32-dolev-inf /path/to/wva-repo \"Qwen/Qwen3-32B\" \"100\""
+    echo "  $0 example-namespace my-llm-deployment /path/to/wva-repo \"Qwen/Qwen3-32B\" \"100\""
     exit 1
 fi
 

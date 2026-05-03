@@ -112,7 +112,7 @@ helm upgrade -i workload-variant-autoscaler ./charts/workload-variant-autoscaler
 - ✅ No interference with other teams' deployments
 - ✅ Simple and predictable behavior
 
-**Example**: To watch `dolev-inf` namespace, deploy WVA into `dolev-inf` with `namespaceScoped: true`
+**Example**: To watch `example-namespace` namespace, deploy WVA into `example-namespace` with `namespaceScoped: true`
 
 #### Option 2: Cluster-Wide with Namespace Exclusions
 **Use when**: You want cluster-wide monitoring but need to exclude specific namespaces.
@@ -288,9 +288,9 @@ helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-aut
   --create-namespace \
   --set controller.namespaceScoped=true
 
-# Example: Deploy WVA to watch only dolev-inf namespace
+# Example: Deploy WVA to watch only example-namespace namespace
 helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace dolev-inf \
+  --namespace example-namespace \
   --create-namespace \
   --set controller.namespaceScoped=true
 ```
@@ -573,8 +573,8 @@ cd skills/configure-wva-autoscaling-llm-d/scripts
 
 # Command-line mode (all values provided)
 ./generate-deploy-script.sh \
-  --namespace dolev-inf \
-  --deployment qwen32-dolev-inf \
+  --namespace example-namespace \
+  --deployment my-llm-deployment \
   --wva-repo /path/to/wva-repo \
   --model-id "Qwen/Qwen3-32B" \
   --variant-cost "100" \
@@ -634,7 +634,7 @@ cd skills/configure-wva-autoscaling-llm-d/scripts
 
 **Example:**
 ```bash
-./test-wva-scaling.sh dolev-inf qwen32-dolev-inf "Qwen/Qwen3-32B" 100
+./test-wva-scaling.sh example-namespace my-llm-deployment "Qwen/Qwen3-32B" 100
 ```
 
 **What the script does:**
