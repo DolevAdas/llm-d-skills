@@ -4,51 +4,198 @@ This directory contains scripts and configuration examples for setting up Worklo
 
 ## Overview
 
-**Important**: For deployment and installation, use the official scripts from the WVA repository (`${WVA_REPO_PATH}`). The scripts in this directory focus on:
-- Runtime verification and monitoring
-- Troubleshooting specific issues
-- Configuration examples and templates
+The scripts in this directory provide:
+- **Automated deployment** - Complete WVA setup automation
+- **Load testing** - Validate autoscaling behavior
+- **Runtime verification** - Check WVA status and metrics
+- **Troubleshooting** - Diagnose common issues
+- **Configuration templates** - Example YAML configurations
+
+## Script Index
+
+### Deployment Scripts
+
+#### [`generate-deploy-script.sh`](./generate-deploy-script.sh) ⭐ **Start Here**
+**Purpose**: Generates a customized deployment script from template based on user requirements
+
+**Usage**:
+```bash
+# Interactive mode (prompts for all values)
+./generate-deploy-script.sh
+
+# Command-line mode (all values provided)
+./generate-deploy-script.sh \
+  --namespace <namespace> \
+  --deployment <deployment-name> \
+  --wva-repo <path> \
+  --model-id <model-id> \
+  --variant-cost <cost> \
+  --min-replicas <n> \
+  --max-replicas <n> \
+  --kv-threshold <threshold> \
+  --queue-threshold <threshold> \
+  --scale-up-window <seconds> \
+  --scale-down-window <seconds> \
+  --output <output-file>
+```
+
+**Example**:
+```bash
+./generate-deploy-script.sh \
+  --namespace dolev-inf \
+  --deployment qwen32-dolev-inf \
+  --wva-repo /path/to/wva-repo \
+  --model-id "Qwen/Qwen3-32B" \
+  --variant-cost "100" \
+  --min-replicas 2 \
+  --max-replicas 10 \
+  --output deploy-wva-qwen32.sh
+```
+
+**What it does**:
+1. Collects user requirements (interactively or via command-line)
+2. Reads [`deploy-wva.sh.template`](./deploy-wva.sh.template)
+3. Replaces template variables with user values
+4. Generates executable deployment script
+5. Makes script executable and ready to run
+
+**Template Variables**:
+- `{{NAMESPACE}}`, `{{DEPLOYMENT_NAME}}`, `{{WVA_REPO_PATH}}`
+- `{{MODEL_ID}}`, `{{VARIANT_COST}}`
+- `{{MIN_REPLICAS}}`, `{{MAX_REPLICAS}}`
+- `{{KV_CACHE_THRESHOLD}}`, `{{QUEUE_LENGTH_THRESHOLD}}`
+- `{{SCALE_UP_STABILIZATION}}`, `{{SCALE_DOWN_STABILIZATION}}`
+- `{{PROMETHEUS_URL}}`, `{{PROMETHEUS_INSECURE_SKIP_VERIFY}}`
+
+#### [`deploy-wva.sh.template`](./deploy-wva.sh.template)
+**Purpose**: Template for generating customized deployment scripts
+
+**Note**: This is a template file with `{{VARIABLE}}` placeholders. Use `generate-deploy-script.sh` to create an executable script from this template.
+
+**What the generated script does**:
+1. Deploys WVA controller into target namespace with `namespaceScoped: true`
+2. Adds required labels (`inference.optimization/acceleratorName`)
+3. Creates metrics Service and ServiceMonitor
+4. Creates VariantAutoscaling and HPA resources with embedded configuration
+5. Verifies deployment and waits for metrics to be ready
+
+**Benefits**:
+- ✅ No separate YAML files needed - all configuration embedded
+- ✅ Single executable script per deployment
+- ✅ Easy to version control with deployment
+- ✅ Can be regenerated with different parameters
+
+#### [`deploy-wva.sh`](./deploy-wva.sh) (Legacy)
+**Purpose**: Original deployment script (requires separate YAML files)
+
+**Note**: This script is kept for backward compatibility. New deployments should use the template-based approach with `generate-deploy-script.sh`.
+
+### Testing Scripts
+
+#### [`test-wva-scaling.sh`](./test-wva-scaling.sh)
+**Purpose**: Tests WVA autoscaling by sending load and monitoring response
+
+**Usage**:
+```bash
+./test-wva-scaling.sh <namespace> <deployment-name> [model-id] [num-requests]
+```
+
+**Example**:
+```bash
+./test-wva-scaling.sh dolev-inf qwen32-dolev-inf "Qwen/Qwen3-32B" 100
+```
+
+**What it does**:
+1. Records baseline state (current replicas)
+2. Sends concurrent requests with long outputs to increase KV cache usage
+3. Monitors WVA logs for scaling decisions
+4. Checks vLLM metrics (KV cache, queue depth)
+5. Waits for scaling to occur (respects stabilization window)
+6. Reports results and provides troubleshooting suggestions
+
+**Parameters**:
+- `namespace`: Target namespace
+- `deployment-name`: Name of deployment to test
+- `model-id`: (Optional) Auto-detects if not provided
+- `num-requests`: (Optional) Default: 100
+
+### Verification Scripts
+
+#### [`verify-wva.sh`](./verify-wva.sh)
+**Purpose**: Comprehensive WVA status check
+
+**Usage**:
+```bash
+./verify-wva.sh <namespace>
+```
+
+**Checks**:
+- VariantAutoscaling resources and status
+- HPA configuration and metrics
+- WVA controller logs
+- Prometheus metrics availability
+
+### Troubleshooting Scripts
+
+#### [`troubleshoot-metrics.sh`](./troubleshoot-metrics.sh)
+**Purpose**: Diagnose metrics collection issues
+
+**Usage**:
+```bash
+./troubleshoot-metrics.sh <namespace> <pod-name>
+```
+
+**Checks**:
+- vLLM metrics endpoint accessibility
+- Prometheus scraping configuration
+- ServiceMonitor setup
+- Metric values and formats
+
+#### [`troubleshoot-scaling.sh`](./troubleshoot-scaling.sh)
+**Purpose**: Diagnose scaling behavior issues
+
+**Usage**:
+```bash
+./troubleshoot-scaling.sh <namespace>
+```
+
+**Checks**:
+- Current saturation levels
+- WVA scaling decisions
+- HPA status and events
+- Stabilization windows
+- Threshold configuration
 
 ## Quick Start
 
-### 1. Deploy WVA (Use WVA Repository Scripts)
+### 1. Deploy WVA
 
-**For full deployment**, use the WVA repository's installation scripts:
-
-```bash
-# Deploy WVA with llm-d infrastructure
-cd ${WVA_REPO_PATH}
-
-# Using Makefile (recommended)
-make deploy-e2e-infra \
-  ENVIRONMENT=kubernetes \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
-
-# Or using install script directly
-ENVIRONMENT=kubernetes \
-DEPLOY_LLM_D=true \
-SCALER_BACKEND=prometheus-adapter \
-./deploy/install.sh
-```
-
-**For manual configuration**, use the configuration templates in `configs/` directory and apply with kubectl:
+Use the automated deployment script:
 
 ```bash
-# 1. Customize the template
-cp configs/variantautoscaling-basic.yaml my-va.yaml
-# Edit my-va.yaml with your values
+# Prepare configuration files first
+cd deployments/your-deployment/
 
-# 2. Apply configuration
-kubectl apply -f my-va.yaml
-kubectl apply -f configs/hpa-basic.yaml
+# Run deployment script
+../../skills/configure-wva-autoscaling-llm-d/scripts/deploy-wva.sh \
+  <namespace> <deployment-name> /path/to/wva-repo
 ```
 
-### 2. Verify WVA Setup
+### 2. Verify Setup
 
 Check that everything is working:
 
 ```bash
+cd skills/configure-wva-autoscaling-llm-d/scripts
 ./verify-wva.sh <namespace>
+```
+
+### 3. Test Autoscaling (Optional)
+
+Validate WVA responds to load:
+
+```bash
+./test-wva-scaling.sh <namespace> <deployment-name>
 ```
 
 ### 3. Troubleshoot Issues

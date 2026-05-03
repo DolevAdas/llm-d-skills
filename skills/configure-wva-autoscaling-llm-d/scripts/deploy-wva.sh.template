@@ -1,0 +1,313 @@
+#!/bin/bash
+# deploy-wva.sh - Automated WVA deployment script
+# Generated from template for deployment: {{DEPLOYMENT_NAME}}
+#
+# This script automates the complete WVA setup process for llm-d deployments
+
+set -e
+
+# Configuration Variables
+NAMESPACE="{{NAMESPACE}}"
+DEPLOYMENT="{{DEPLOYMENT_NAME}}"
+WVA_REPO="{{WVA_REPO_PATH}}"
+MODEL_ID="{{MODEL_ID}}"
+VARIANT_COST="{{VARIANT_COST}}"
+PROMETHEUS_URL="{{PROMETHEUS_URL}}"
+PROMETHEUS_INSECURE_SKIP_VERIFY="{{PROMETHEUS_INSECURE_SKIP_VERIFY}}"
+
+# Saturation Thresholds (optional customization)
+KV_CACHE_THRESHOLD="{{KV_CACHE_THRESHOLD}}"
+QUEUE_LENGTH_THRESHOLD="{{QUEUE_LENGTH_THRESHOLD}}"
+KV_SPARE_TRIGGER="{{KV_SPARE_TRIGGER}}"
+QUEUE_SPARE_TRIGGER="{{QUEUE_SPARE_TRIGGER}}"
+
+# Replica Configuration
+MIN_REPLICAS="{{MIN_REPLICAS}}"
+MAX_REPLICAS="{{MAX_REPLICAS}}"
+
+# HPA Stabilization Windows
+SCALE_UP_STABILIZATION="{{SCALE_UP_STABILIZATION}}"
+SCALE_DOWN_STABILIZATION="{{SCALE_DOWN_STABILIZATION}}"
+
+echo "=========================================="
+echo "WVA Deployment Configuration"
+echo "=========================================="
+echo "Namespace:              $NAMESPACE"
+echo "Deployment:             $DEPLOYMENT"
+echo "WVA Repository:         $WVA_REPO"
+echo "Model ID:               $MODEL_ID"
+echo "Variant Cost:           $VARIANT_COST"
+echo "Prometheus URL:         $PROMETHEUS_URL"
+echo "Min/Max Replicas:       $MIN_REPLICAS/$MAX_REPLICAS"
+echo "KV Cache Threshold:     $KV_CACHE_THRESHOLD"
+echo "Queue Length Threshold: $QUEUE_LENGTH_THRESHOLD"
+echo "=========================================="
+echo ""
+
+# Verify WVA repository exists
+if [ ! -d "$WVA_REPO" ]; then
+    echo "ERROR: WVA repository not found at: $WVA_REPO"
+    exit 1
+fi
+
+# Verify deployment exists
+if ! kubectl get deployment "$DEPLOYMENT" -n "$NAMESPACE" &>/dev/null; then
+    echo "ERROR: Deployment '$DEPLOYMENT' not found in namespace '$NAMESPACE'"
+    exit 1
+fi
+
+echo "✓ Pre-flight checks passed"
+echo ""
+
+# Phase 1: Deploy WVA controller
+echo "=========================================="
+echo "Phase 1: Deploying WVA Controller"
+echo "=========================================="
+echo "Deploying WVA into namespace: $NAMESPACE"
+echo "This will make WVA watch only this namespace"
+echo ""
+
+cd "$WVA_REPO"
+
+# Build Helm command with optional parameters
+HELM_CMD="helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace $NAMESPACE \
+  --create-namespace \
+  --set controller.namespaceScoped=true"
+
+# Add Prometheus configuration if provided
+if [ -n "$PROMETHEUS_URL" ]; then
+    HELM_CMD="$HELM_CMD --set prometheus.url=$PROMETHEUS_URL"
+fi
+
+if [ "$PROMETHEUS_INSECURE_SKIP_VERIFY" = "true" ]; then
+    HELM_CMD="$HELM_CMD --set prometheus.insecureSkipVerify=true"
+fi
+
+# Add saturation thresholds if customized
+if [ -n "$KV_CACHE_THRESHOLD" ] && [ "$KV_CACHE_THRESHOLD" != "0.80" ]; then
+    HELM_CMD="$HELM_CMD --set saturationScaling.kvCacheThreshold=$KV_CACHE_THRESHOLD"
+fi
+
+if [ -n "$QUEUE_LENGTH_THRESHOLD" ] && [ "$QUEUE_LENGTH_THRESHOLD" != "5" ]; then
+    HELM_CMD="$HELM_CMD --set saturationScaling.queueLengthThreshold=$QUEUE_LENGTH_THRESHOLD"
+fi
+
+# Execute Helm command
+eval $HELM_CMD
+
+echo ""
+echo "✓ WVA controller deployed"
+echo ""
+
+# Wait for controller to be ready
+echo "Waiting for WVA controller to be ready..."
+kubectl wait --for=condition=available --timeout=120s \
+  deployment -l app.kubernetes.io/name=workload-variant-autoscaler -n "$NAMESPACE"
+
+echo ""
+echo "✓ WVA controller is ready"
+echo ""
+
+# Verify namespace-scoping
+echo "Verifying WVA is watching correct namespace..."
+sleep 5
+WATCH_NS=$(kubectl logs -n "$NAMESPACE" -l app.kubernetes.io/name=workload-variant-autoscaler --tail=50 | grep "Watching" | tail -1)
+echo "$WATCH_NS"
+
+if echo "$WATCH_NS" | grep -q "$NAMESPACE"; then
+    echo "✓ WVA is correctly watching namespace: $NAMESPACE"
+else
+    echo "⚠ WARNING: WVA may not be watching the correct namespace"
+    echo "Check logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=workload-variant-autoscaler"
+fi
+echo ""
+
+# Phase 2: Prepare deployment
+echo "=========================================="
+echo "Phase 2: Preparing Deployment"
+echo "=========================================="
+
+echo "Adding required accelerator label..."
+kubectl label deployment "$DEPLOYMENT" -n "$NAMESPACE" \
+  inference.optimization/acceleratorName=nvidia --overwrite
+
+echo "✓ Accelerator label added"
+echo ""
+
+# Verify label
+echo "Verifying label..."
+if kubectl get deployment "$DEPLOYMENT" -n "$NAMESPACE" --show-labels | grep -q "acceleratorName=nvidia"; then
+    echo "✓ Label verified"
+else
+    echo "⚠ WARNING: Label may not have been applied correctly"
+fi
+echo ""
+
+echo "Checking for metrics infrastructure..."
+if kubectl get service "${DEPLOYMENT}-metrics" -n "$NAMESPACE" &>/dev/null; then
+    echo "✓ Metrics Service already exists"
+else
+    echo "Creating metrics Service..."
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${DEPLOYMENT}-metrics
+  namespace: ${NAMESPACE}
+  labels:
+    app: ${DEPLOYMENT}
+spec:
+  selector:
+    app: ${DEPLOYMENT}
+  ports:
+  - name: metrics
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+EOF
+    echo "✓ Metrics Service created"
+fi
+echo ""
+
+if kubectl get servicemonitor "${DEPLOYMENT}-metrics" -n "$NAMESPACE" &>/dev/null; then
+    echo "✓ ServiceMonitor already exists"
+else
+    echo "Creating ServiceMonitor..."
+    kubectl apply -f - <<EOF
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ${DEPLOYMENT}-metrics
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    matchLabels:
+      app: ${DEPLOYMENT}
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+EOF
+    echo "✓ ServiceMonitor created"
+fi
+echo ""
+
+# Phase 3: Apply configurations
+echo "=========================================="
+echo "Phase 3: Applying WVA Configuration"
+echo "=========================================="
+
+# Create VariantAutoscaling
+echo "Creating VariantAutoscaling resource..."
+kubectl apply -f - <<EOF
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: ${DEPLOYMENT}-va
+  namespace: ${NAMESPACE}
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: ${DEPLOYMENT}
+  modelID: "${MODEL_ID}"
+  variantCost: "${VARIANT_COST}"
+  minReplicas: ${MIN_REPLICAS}
+  maxReplicas: ${MAX_REPLICAS}
+EOF
+echo "✓ VariantAutoscaling created"
+echo ""
+
+# Create HPA
+echo "Creating HPA resource..."
+kubectl apply -f - <<EOF
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ${DEPLOYMENT}-hpa
+  namespace: ${NAMESPACE}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ${DEPLOYMENT}
+  minReplicas: ${MIN_REPLICAS}
+  maxReplicas: ${MAX_REPLICAS}
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: wva_kv_cache_saturation
+        selector:
+          matchLabels:
+            variant_name: ${DEPLOYMENT}-va
+            exported_namespace: ${NAMESPACE}
+      target:
+        type: Value
+        value: "1"
+  - type: External
+    external:
+      metric:
+        name: wva_queue_depth_saturation
+        selector:
+          matchLabels:
+            variant_name: ${DEPLOYMENT}-va
+            exported_namespace: ${NAMESPACE}
+      target:
+        type: Value
+        value: "1"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: ${SCALE_UP_STABILIZATION}
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: ${SCALE_DOWN_STABILIZATION}
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 15
+EOF
+echo "✓ HPA created"
+echo ""
+
+# Verification
+echo "=========================================="
+echo "Verification"
+echo "=========================================="
+
+echo "Checking resources..."
+kubectl get variantautoscaling,hpa -n "$NAMESPACE"
+echo ""
+
+echo "Waiting for WVA to detect VariantAutoscaling (10 seconds)..."
+sleep 10
+
+echo ""
+echo "Checking WVA controller logs..."
+kubectl logs -n "$NAMESPACE" -l app.kubernetes.io/name=workload-variant-autoscaler --tail=30 | grep -E "VariantAutoscaling|No active"
+echo ""
+
+echo "Waiting for metrics to be ready (120 seconds for Prometheus scrape)..."
+echo "You can monitor progress with: kubectl get variantautoscaling -n $NAMESPACE -w"
+sleep 120
+
+echo ""
+echo "Final status:"
+kubectl get variantautoscaling -n "$NAMESPACE"
+echo ""
+
+echo "=========================================="
+echo "Deployment Complete!"
+echo "=========================================="
+echo ""
+echo "Next steps:"
+echo "1. Verify METRICSREADY is True: kubectl get variantautoscaling -n $NAMESPACE"
+echo "2. Monitor WVA logs: kubectl logs -n $NAMESPACE -l app.kubernetes.io/name=workload-variant-autoscaler -f"
+echo "3. Check HPA status: kubectl describe hpa -n $NAMESPACE"
+echo "4. (Optional) Run load test: ./test-wva-scaling.sh $NAMESPACE $DEPLOYMENT"
+echo ""
+
+# Made with Bob

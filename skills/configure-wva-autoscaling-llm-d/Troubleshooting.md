@@ -142,7 +142,8 @@ kubectl edit hpa -n <namespace>
 - Controller watching wrong namespace
 
 **Common Causes**:
-- **Missing accelerator label on deployment** (MOST COMMON)
+- **WVA deployed to wrong namespace** (MOST COMMON - see Issue #11)
+- **Missing accelerator label on deployment**
 - Wrong API version in VariantAutoscaling YAML
 - Namespace-scoping configuration not working
 - Config file overriding environment variables
@@ -455,7 +456,9 @@ kubectl get variantautoscaling -n <namespace>
 - Ensure model IDs are identical across variants
 - Increase maxReplicas on cheaper variant
 
-### 9. Namespace-Scoping Not Working
+### 9. Namespace-Scoping Not Working (DEPRECATED - See Issue #11)
+
+**⚠️ IMPORTANT**: This approach is deprecated. See Issue #11 for the correct namespace-scoped deployment method.
 
 **Symptoms**:
 - WVA controller watching wrong namespace
@@ -465,8 +468,9 @@ kubectl get variantautoscaling -n <namespace>
 **Root Cause**:
 - The WVA config file overrides the `WATCH_NAMESPACE` environment variable
 - Setting env var directly doesn't work
+- **This entire approach is problematic - use namespace-scoped deployment instead**
 
-**Solutions**:
+**Old Solutions (NOT RECOMMENDED)**:
 
 ```bash
 # WRONG WAY (doesn't work):
@@ -474,13 +478,13 @@ kubectl set env deployment/workload-variant-autoscaler-controller-manager \
   -n workload-variant-autoscaler-system \
   WATCH_NAMESPACE=<your-namespace>
 
-# CORRECT WAY 1: Use Helm values
+# OLD WAY 1: Use Helm values (problematic)
 helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
   --namespace workload-variant-autoscaler-system \
   --set controller.watchNamespace=<your-namespace> \
   --reuse-values
 
-# CORRECT WAY 2: Edit ConfigMap directly
+# OLD WAY 2: Edit ConfigMap directly (problematic)
 kubectl edit configmap -n workload-variant-autoscaler-system \
   wva-variantautoscaling-config
 # Add or modify: WATCH_NAMESPACE: "<your-namespace>"
@@ -488,14 +492,9 @@ kubectl edit configmap -n workload-variant-autoscaler-system \
 # After changing ConfigMap, restart controller
 kubectl rollout restart deployment -n workload-variant-autoscaler-system \
   workload-variant-autoscaler-controller-manager
-
-# Verify namespace-scoping is working
-kubectl logs -n workload-variant-autoscaler-system \
-  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
-# Should show: "Watching single namespace: <your-namespace>"
 ```
 
-**Key Takeaway**: Always use Helm values or ConfigMap to set namespace-scoping, never environment variables.
+**⚠️ CORRECT APPROACH**: Deploy WVA directly into your target namespace with `namespaceScoped: true`. See Issue #11 below.
 
 ### 10. Wrong API Version or variantCost Type
 
@@ -538,6 +537,183 @@ EOF
 **Configuration Rules**:
 - API version: `llmd.ai/v1alpha1` (NOT `inference.llmd.ai/v1alpha1`)
 - `variantCost`: Must be string (e.g., `"100"` not `100`)
+- **NEVER include `spec.metrics` in VariantAutoscaling** - metrics belong in HPA only
+
+### 11. WVA Deployed to Wrong Namespace (CRITICAL)
+
+**Symptoms**:
+- WVA controller logs show "No active VariantAutoscalings found"
+- VariantAutoscaling exists in target namespace but WVA doesn't detect it
+- Controller watching `workload-variant-autoscaler-system` instead of target namespace
+- Attempts to configure `watchNamespace` via Helm values or ConfigMap don't work reliably
+
+**Root Cause**:
+- **WVA must be deployed INTO the target namespace to watch it**
+- When `namespaceScoped: true`, WVA watches its own deployment namespace
+- Deploying to `workload-variant-autoscaler-system` and trying to watch another namespace is unreliable
+- ConfigMap changes require controller restart and may not take effect properly
+
+**CORRECT Solution**:
+
+```bash
+# 1. Deploy WVA directly into your target namespace
+helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace <your-target-namespace> \
+  --create-namespace \
+  --set controller.namespaceScoped=true \
+  --set prometheus.url=<prometheus-url> \
+  --set prometheus.insecureSkipVerify=true
+
+# 2. Verify WVA is watching the correct namespace
+kubectl logs -n <your-target-namespace> \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
+# Should show: "Watching single namespace: <your-target-namespace>"
+
+# 3. Verify WVA detects your VariantAutoscaling resources
+kubectl logs -n <your-target-namespace> \
+  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
+```
+
+**Why This Works**:
+- `namespaceScoped: true` makes WVA watch its own deployment namespace
+- No need for ConfigMap changes or `watchNamespace` parameter
+- Controller starts with correct configuration immediately
+- More reliable and predictable behavior
+
+**Migration from Old Setup**:
+
+```bash
+# 1. Uninstall WVA from workload-variant-autoscaler-system
+helm uninstall workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system
+
+# 2. Install WVA into target namespace
+helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace <your-target-namespace> \
+  --set controller.namespaceScoped=true \
+  --set prometheus.url=<prometheus-url> \
+  --set prometheus.insecureSkipVerify=true
+
+# 3. Verify it's working
+kubectl get variantautoscaling -n <your-target-namespace>
+kubectl logs -n <your-target-namespace> \
+  -l app.kubernetes.io/name=workload-variant-autoscaler
+```
+
+**Key Takeaways**:
+- ✅ Deploy WVA INTO the namespace you want to monitor
+- ✅ Use `namespaceScoped: true` for single-namespace deployments
+- ❌ Don't deploy to `workload-variant-autoscaler-system` and try to watch other namespaces
+- ❌ Don't rely on `watchNamespace` parameter or ConfigMap changes
+
+### 12. Invalid spec.metrics in VariantAutoscaling
+
+**Symptoms**:
+- Error: "unknown field spec.metrics" when applying VariantAutoscaling
+- VariantAutoscaling resource fails validation
+- WVA controller doesn't recognize the resource
+
+**Root Cause**:
+- Metrics configuration belongs in HPA, not VariantAutoscaling
+- Common mistake when copying examples or migrating configurations
+
+**Solution**:
+
+```bash
+# WRONG - metrics in VariantAutoscaling:
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: my-variant
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: my-deployment
+  modelID: "Qwen/Qwen3-32B"
+  variantCost: "100"
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:  # ❌ WRONG - this field doesn't exist
+    - type: External
+      external:
+        metric:
+          name: wva_kv_cache_saturation
+
+# CORRECT - metrics in HPA only:
+apiVersion: llmd.ai/v1alpha1
+kind: VariantAutoscaling
+metadata:
+  name: my-variant
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: my-deployment
+  modelID: "Qwen/Qwen3-32B"
+  variantCost: "100"
+  minReplicas: 2
+  maxReplicas: 10
+  # No metrics field here
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: my-variant-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-deployment
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:  # ✅ CORRECT - metrics go in HPA
+    - type: External
+      external:
+        metric:
+          name: wva_kv_cache_saturation
+```
+
+**Key Takeaway**: VariantAutoscaling defines the autoscaling policy, HPA defines the metrics and scaling behavior.
+
+### 13. ConfigMap Changes Not Taking Effect
+
+**Symptoms**:
+- Modified WVA ConfigMap but behavior doesn't change
+- Controller still using old configuration
+- Saturation thresholds not updating
+
+**Root Cause**:
+- WVA controller reads ConfigMap at startup only
+- Changes require controller restart to take effect
+- **Better approach**: Set configuration during initial Helm install
+
+**Solutions**:
+
+```bash
+# Option 1: Restart controller after ConfigMap change
+kubectl rollout restart deployment -n <namespace> \
+  workload-variant-autoscaler-controller-manager
+
+# Option 2 (BETTER): Set configuration during Helm install
+helm install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace <namespace> \
+  --set controller.namespaceScoped=true \
+  --set saturationScaling.kvCacheThreshold=0.80 \
+  --set saturationScaling.queueLengthThreshold=5 \
+  --set prometheus.url=<prometheus-url>
+
+# Option 3: Update via Helm upgrade
+helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace <namespace> \
+  --set saturationScaling.kvCacheThreshold=0.75 \
+  --reuse-values
+```
+
+**Best Practice**:
+- Set all configuration during initial Helm install
+- Avoid manual ConfigMap edits
+- Use Helm upgrade for configuration changes
+- ConfigMap changes always require controller restart
 
 ## Threshold Tuning Guide
 
