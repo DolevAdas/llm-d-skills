@@ -168,7 +168,7 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 2. **ALWAYS ask user for:**
    1. **Scaling backend**: HPA or KEDA
      - **CRITICAL**: Always ask which backend the user prefers
-     - If HPA is preferable for their llm-d deployment, explain why:
+     - If HPA is preferable for their llm-d deployment, explain why
    2. **Scaling behavior**: Fast/balanced/cost-optimized
    3. **Stabilization windows**: Scale-up (default 120s, range 0-300s), Scale-down (default 300s, range 120-600s)
    4. **Replica limits**: minReplicas, maxReplicas
