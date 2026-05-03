@@ -157,36 +157,44 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 
 ### 2. Configuration Strategy
 
-**1. Choose Scaling Backend:**
-- **HPA** (Kubernetes native): Standard Kubernetes clusters, simpler setup
-- **KEDA**: OpenShift (via CMA), native scale-to-zero support, event-driven scaling
+**Configuration Detection and User Input:**
 
-- **HPA** ([template](scripts/configs/hpa-basic.yaml), [guide](${WVA_REPO_PATH}/docs/user-guide/hpa-integration.md))
-  - Reads `wva_desired_replicas` metric and adjusts deployment replicas
-  - Stabilization: 0-60s scale-up (fast response), 240-300s scale-down (prevent flapping)
-- **KEDA** ([guide](${WVA_REPO_PATH}/docs/user-guide/keda-integration.md))
-  - Alternative to HPA with native scale-to-zero support
-  - Preferred for OpenShift (via Custom Metrics Autoscaler)
+1. **Auto-detect from deployment:**
+   - Deployment/StatefulSet/LWS name, kind, namespace
+   - Model ID (from labels/env vars if available)
+   - Current replicas, existing HPA
+   - Accelerator type
 
-**Important**: All threshold values below are examples. Ask the user for their preferred values based on their workload characteristics. If the user is unsure, use the default values shown in parentheses.
+2. **Ask user for:**
+   - **Scaling backend**: HPA or KEDA
+   - **Scaling behavior**: Fast/balanced/cost-optimized
+   - **Stabilization windows**: Scale-up (default 120s, range 0-300s), Scale-down (default 300s, range 120-600s)
+   - **Replica limits**: minReplicas, maxReplicas
+   - **Saturation thresholds** (if custom needed):
+     - `kvCacheThreshold` (default 0.80), `queueLengthThreshold` (default 5)
+     - `kvSpareTrigger` (default 0.10), `queueSpareTrigger` (default 3)
+   - **Multi-variant**: Variant cost, other variants for same model
 
-Configure these components:
+3. **Must ask if not detected:**
+   - Model ID, variant cost, scale-to-zero requirement
 
-**2. VariantAutoscaling Resource** ([template](scripts/configs/variantautoscaling-basic.yaml))
-- **`scaleTargetRef`** (required): Points to the Deployment/StatefulSet/LWS that WVA will scale. Must match the actual resource name and kind.
-- **`modelID`** (required): Identifies which model this variant serves (e.g., `meta-llama/Llama-3.1-8B`). Used for metrics grouping and multi-variant coordination.
-- **`variantCost`** (optional): Relative cost value (e.g., H100=100, A100=70, L4=30). WVA scales cheaper variants first when multiple variants serve the same model.
+**Key Components:**
 
-**3. Saturation Thresholds** (via ConfigMap: `wva-saturation-scaling-config`)
-- `kvCacheThreshold` (0.80): When KV cache usage exceeds this (80%), replica is considered saturated. Triggers scale-up.
-- `queueLengthThreshold` (5): When request queue exceeds this length, replica is saturated. Prevents latency spikes.
-- `kvSpareTrigger` (0.10): Proactive scaling - adds capacity when average spare KV capacity drops below 10%. Scales before saturation.
-- `queueSpareTrigger` (3): Proactive scaling - adds capacity when average spare queue capacity drops below 3 requests.
-- **Namespace-local overrides**: Create same ConfigMap in target namespace to override global thresholds for specific namespaces (e.g., production vs dev).
+**VariantAutoscaling** ([template](scripts/configs/variantautoscaling-basic.yaml)):
+- `scaleTargetRef`: Target deployment/statefulset/LWS
+- `modelID`: Model identifier (e.g., `meta-llama/Llama-3.1-8B`)
+- `variantCost`: Relative cost (H100=100, A100=70, L4=30) for multi-variant optimization
 
-**4. Controller Configuration** (via ConfigMap: `wva-variantautoscaling-config`)
-- `PROMETHEUS_BASE_URL` (required): Where WVA fetches metrics from (e.g., `http://prometheus:9090`). Must be accessible from WVA controller.
-- `GLOBAL_OPT_INTERVAL` (default: 60s): How frequently WVA recalculates desired replicas. Lower = faster response, higher = more stable.
+**Saturation Thresholds** (ConfigMap: `wva-saturation-scaling-config`):
+- `kvCacheThreshold` (0.80): Saturation trigger when KV cache exceeds 80%
+- `queueLengthThreshold` (5): Saturation trigger when queue exceeds 5 requests
+- `kvSpareTrigger` (0.10): Proactive scaling when spare capacity drops below 10%
+- `queueSpareTrigger` (3): Proactive scaling when spare queue capacity drops below 3
+- **Namespace overrides**: Create ConfigMap in target namespace for local thresholds
+
+**Controller Config** (ConfigMap: `wva-variantautoscaling-config`):
+- `PROMETHEUS_BASE_URL`: Prometheus endpoint (must be accessible from WVA)
+- `GLOBAL_OPT_INTERVAL` (60s): WVA reconciliation frequency (not Prometheus scrape interval)
 
 
 ### 3. Common Configuration Patterns
@@ -214,28 +222,26 @@ See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed examples.
 
 ### 4. Threshold Alignment with Inference Scheduler (EPP)
 
-**Critical**: WVA and EPP must use identical thresholds. Each model has its own EPP instance (1-to-1 relationship).
-
-**Why misalignment causes issues:**
-- EPP stops routing to saturated replicas → WVA still sees capacity → doesn't scale
-- WVA scales up → EPP still routes to old replicas → new capacity unused
+**Critical**: WVA and EPP must use identical thresholds. One EPP instance per model (shared across variants of same model).
 
 **Threshold mapping:**
-- WVA `kvCacheThreshold` = EPP `kvCacheUtilThreshold` (default: 0.80)
-- WVA `queueLengthThreshold` = EPP `queueDepthThreshold` (default: 5)
+- WVA `kvCacheThreshold` = EPP `kvCacheUtilThreshold`
+- WVA `queueLengthThreshold` = EPP `queueDepthThreshold`
 
-**How to align per model:**
-1. Update WVA ConfigMap: `wva-saturation-scaling-config` (changes apply immediately)
-2. Update EPP config for that model's EPP instance
-3. Restart EPP pod: `kubectl rollout restart deployment/gaie-<model-name>-epp -n <namespace>`
-
-**Note**: EPP requires pod restart for config changes; WVA auto-reloads ConfigMap changes.
+**To align:**
+1. Update WVA ConfigMap `wva-saturation-scaling-config` (auto-reloads)
+2. Update EPP config
+3. Restart EPP: `kubectl rollout restart deployment/gaie-<model-name>-epp -n <namespace>`
 
 ## Installation and Deployment
 
 **Single Source of Truth**: All deployment scripts in WVA repository (`${WVA_REPO_PATH}`).
 
-### Quick Start - Deploy WVA
+**IMPORTANT - Two-Phase Process:**
+
+### Phase 1: Deploy WVA Controller (Infrastructure)
+
+This phase deploys the WVA controller infrastructure with **default/generic settings**. The user-specific configuration from Section 2 is applied in Phase 2.
 
 ```bash
 cd ${WVA_REPO_PATH}
@@ -252,6 +258,36 @@ make deploy-wva-emulated-on-kind
 # Full stack (WVA + llm-d + monitoring)
 make deploy-e2e-infra ENVIRONMENT=kubernetes
 ```
+
+**What gets deployed in Phase 1:**
+- WVA controller with default settings
+- Prometheus (if not already present)
+- Scaler backend (HPA or KEDA)
+- Default ConfigMaps with standard thresholds
+
+### Phase 2: Apply User-Specific Configuration
+
+After Phase 1 completes, apply the configuration built in Section 2 based on user requirements:
+
+```bash
+# 1. Apply VariantAutoscaling resource (built from user input in Section 2)
+kubectl apply -f <generated-variantautoscaling>.yaml
+
+# 2. Apply HPA with user-specified stabilization windows
+kubectl apply -f <generated-hpa>.yaml
+
+# 3. Update saturation thresholds if user requested custom values
+kubectl apply -f <generated-saturation-config>.yaml
+
+# 4. Verify configuration
+./scripts/verify-wva.sh <namespace>
+```
+
+**Configuration Flow:**
+1. Section 2: Gather user requirements and auto-detect deployment details
+2. Phase 1: Deploy WVA infrastructure (generic)
+3. Phase 2: Apply user-specific VariantAutoscaling, HPA, and threshold configs
+4. Verification: Ensure everything works as expected
 
 ### Upgrading WVA
 
@@ -274,159 +310,67 @@ spec:
     name: <deployment-name>
 ```
 
-### Key WVA Repository Resources
+### Repository Resources
 
-**Deployment Scripts** (`${WVA_REPO_PATH}/deploy/`):
-- `install.sh` - Main installation script (handles all environments)
-- `install-multi-model.sh` - Multi-model deployment
-- `kind-emulator/setup.sh` - Kind cluster with GPU emulation
-- `lib/*.sh` - Modular deployment functions
+**WVA Repository** (`${WVA_REPO_PATH}`):
+- **Deployment**: `deploy/install.sh`, `deploy/install-multi-model.sh`, `deploy/lib/*.sh`
+- **Configuration**: `deploy/configmap-*.yaml` (saturation, queueing, serviceclass)
+- **Documentation**: `docs/user-guide/` (configuration.md, troubleshooting.md, crd-reference.md, hpa-integration.md, keda-integration.md)
+- **Makefile**: Run `make help` for 40+ deployment/testing targets
+- **Samples**: `config/samples/`
 
-**Configuration** (`${WVA_REPO_PATH}/deploy/`):
-- `configmap-saturation-scaling.yaml` - Saturation thresholds
-- `configmap-queueing-model.yaml` - Queue depth configuration
-- `configmap-serviceclass.yaml` - Service class definitions
+**llm-d Repository** (`${LLMD_REPO_PATH}`):
+- **WVA Integration**: `guides/workload-autoscaling/README.wva.md`
+- **Helmfile**: `guides/workload-autoscaling/helmfile.yaml.gotmpl`
+- **Values**: `guides/workload-autoscaling/workload-autoscaling/values.yaml`
 
-**Documentation** (`${WVA_REPO_PATH}/docs/`):
-- `user-guide/configuration.md` - Complete configuration guide
-- `user-guide/troubleshooting.md` - Troubleshooting guide
-- `user-guide/crd-reference.md` - CRD API reference
-- `saturation-scaling-config.md` - Saturation scaling details
-
-**Makefile** (`${WVA_REPO_PATH}/Makefile`):
-- 40+ targets for deployment, testing, and development
-- Run `make help` for full list of available targets
-
-### llm-d Repository Resources
-
-**WVA Integration** (`${LLMD_REPO_PATH}/guides/workload-autoscaling/`):
-- `README.wva.md` - Complete WVA setup guide
-- `helmfile.yaml.gotmpl` - Helmfile templates
-- `workload-autoscaling/values.yaml` - Helm values
-
-### Common Makefile Targets
-
-For complete list of targets and options, run `make help` in `${WVA_REPO_PATH}` or see the [Makefile](${WVA_REPO_PATH}/Makefile).
-
-**Most Used Targets**:
+**Common Makefile Targets** (run in `${WVA_REPO_PATH}`):
 ```bash
-# Deployment
-make deploy-wva-on-k8s          # Deploy on Kubernetes
-make deploy-wva-on-openshift    # Deploy on OpenShift
-make deploy-wva-emulated-on-kind # Deploy on Kind (local)
-make deploy-e2e-infra           # Deploy full stack (WVA + llm-d + monitoring)
-
-# Multi-model
-make deploy-multi-model-infra MODELS="model1,model2"
-
-# Testing
-make test-e2e-smoke             # Quick smoke tests (basic functionality check)
-make test-e2e-full              # Full test suite (comprehensive tests)
-make test-benchmark             # Benchmark tests (performance validation)
-
-# Development
-make docker-build               # Build controller image
-make manifests                  # Generate CRDs
-make test                       # Run unit tests
-
+make deploy-wva-on-k8s                    # Kubernetes deployment
+make deploy-wva-on-openshift              # OpenShift deployment
+make deploy-e2e-infra ENVIRONMENT=kubernetes  # Full stack
+make deploy-multi-model-infra MODELS="m1,m2"  # Multi-model
+make test-e2e-smoke                       # Quick tests
 ```
 
-**Key Configuration Variables**:
-- `ENVIRONMENT`: `kind-emulator`, `kubernetes`, `openshift`
-- `SCALER_BACKEND`: `prometheus-adapter`, `keda`, `none`
-- `MODELS`: Comma-separated model list for multi-model
-- `BENCHMARK_SCENARIO`: `prefill_heavy`, `decode_heavy`, `symmetrical`
-- `IMG`: Controller image
-- `NAMESPACE_SCOPED`: Deploy namespace-scoped controller
+**Benchmark Templates**: `deployments/*/benchmark-templates/` - See run-llm-d-benchmark skill
 
-For complete variable list, see `${WVA_REPO_PATH}/Makefile` (lines 1-50).
+## Verification, Troubleshooting & Critical Requirements
 
-### Testing with llm-d-benchmark
+### Critical Configuration Requirements
 
-Benchmark templates are in deployment directories:
-- Templates: `deployments/*/benchmark-templates/` (guide.yaml, guidellm.yaml, sanity.yaml, shared_prefix.yaml)
-- Use `run_only.sh` with instantiated config files
-- See the run-llm-d-benchmark skill for detailed workflow
-
-## Monitoring and Verification
-
-### Deployment Verification (from WVA Repository)
-
-After deploying WVA using the installation scripts, the deployment is automatically verified by `${WVA_REPO_PATH}/deploy/lib/verify.sh`. This checks:
-- WVA controller pods are running
-- Prometheus is running (if deployed)
-- llm-d infrastructure is deployed (if enabled)
-- VariantAutoscaling resources exist
-- Scaler backend (KEDA or Prometheus Adapter) is running
-
-The `deploy/install.sh` script automatically calls this verification and provides a comprehensive summary.
-
-### Runtime Verification (from Skill Scripts)
-
-After WVA is deployed and configured, use the skill verification scripts to check runtime status:
-
-```bash
-# Comprehensive runtime verification
-./scripts/verify-wva.sh <namespace>
-```
-
-This script checks:
-- VariantAutoscaling status (METRICSREADY, CURRENTREPLICAS, DESIREDREPLICAS, SATURATION)
-- HPA status and metrics
-- WVA controller logs
-- External metrics API availability
-
-### Troubleshooting Scripts
-
-```bash
-# Troubleshoot metrics issues
-./scripts/troubleshoot-metrics.sh <namespace> <pod-name>
-
-# Troubleshoot scaling decisions
-./scripts/troubleshoot-scaling.sh <namespace>
-```
-
-### Using WVA Repository Verification
-
-You can also use the WVA repository's verification function directly:
-
-```bash
-# Source the verification library
-source ${WVA_REPO_PATH}/deploy/lib/verify.sh
-source ${WVA_REPO_PATH}/deploy/lib/common.sh
-
-# Set required variables
-export WVA_NS="workload-variant-autoscaler-system"
-export LLMD_NS="llm-d-inference-scheduler"
-export MONITORING_NAMESPACE="monitoring"
-
-# Run verification
-verify_deployment
-```
-
-## Critical Configuration Requirements
-
-**Two critical requirements for WVA to work**:
-
+**Two requirements for WVA to work**:
 1. **VariantAutoscaling MUST have accelerator label**: `inference.optimization/acceleratorName: nvidia`
 2. **HPA selector MUST match both labels**: `variant_name` and `exported_namespace`
 
-See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed examples and [`Troubleshooting.md`](./Troubleshooting.md) for common issues.
+**Using existing WVA controller**: If a controller exists, **ASK USER** based on isolation requirements (Section 1):
+- Reuse existing (VariantAutoscaling auto-discovered) OR
+- Deploy new namespace-scoped controller (complete isolation)
 
-**Using existing WVA controller**: If a WVA controller exists in another namespace, just create your VariantAutoscaling - it will be automatically discovered. Update saturation config in the controller's namespace if needed.
+### Verification Scripts
 
-## Troubleshooting
+**After deployment** (automatic via `${WVA_REPO_PATH}/deploy/install.sh`):
+- Checks: WVA controller, Prometheus, llm-d infra, VariantAutoscaling, scaler backend
 
-For detailed troubleshooting guidance, see [`Troubleshooting.md`](./Troubleshooting.md) and [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md).
-
-**Quick diagnostics**:
+**Runtime verification** (skill scripts):
 ```bash
-./scripts/verify-wva.sh <namespace>              # Comprehensive verification
-./scripts/troubleshoot-metrics.sh <namespace>    # Check metrics issues
-./scripts/troubleshoot-scaling.sh <namespace>    # Check scaling behavior
+./scripts/verify-wva.sh <namespace>                    # Status, HPA, logs, metrics
+./scripts/troubleshoot-metrics.sh <namespace> <pod>    # Metrics diagnostics
+./scripts/troubleshoot-scaling.sh <namespace>          # Scaling diagnostics
 ```
 
-**Most common issues**: Missing accelerator label, wrong HPA label selector, or metrics not yet scraped. See Troubleshooting.md for solutions.
+**Manual verification** (WVA repository):
+```bash
+source ${WVA_REPO_PATH}/deploy/lib/verify.sh
+export WVA_NS="workload-variant-autoscaler-system"
+verify_deployment
+```
+
+### Common Issues
+
+**Most common**: Missing accelerator label, wrong HPA selector, metrics not scraped yet
+
+See [`Troubleshooting.md`](./Troubleshooting.md) and [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed solutions.
 
 ## Best Practices
 
@@ -454,31 +398,8 @@ When helping users configure WVA:
 - Skip threshold alignment with EPP
 - Forget to explain the "why" behind configurations
 
-## Reference Documentation
+## Online Resources
 
-For detailed information, refer to these files in the repositories:
-
-**WVA Repository** (`${WVA_REPO_PATH}`):
-- **Configuration Guide**: `docs/user-guide/configuration.md`
-- **Saturation Scaling**: `docs/saturation-scaling-config.md`
-- **CRD Reference**: `docs/user-guide/crd-reference.md`
-- **Troubleshooting**: `docs/user-guide/troubleshooting.md`
-- **HPA Integration**: `docs/user-guide/hpa-integration.md`
-- **KEDA Integration**: `docs/user-guide/keda-integration.md`
-- **Configuration Samples**: `config/samples/`
-
-**llm-d Repository** (`${LLMD_REPO_PATH}`):
-- **Installation Guide**: `guides/workload-autoscaling/README.wva.md`
-- **HPA+IGW Guide**: `guides/workload-autoscaling/README.hpa-igw.md`
-- **Helmfile Templates**: `guides/workload-autoscaling/helmfile.yaml.gotmpl`
-- **Values Configuration**: `guides/workload-autoscaling/workload-autoscaling/values.yaml`
-
-**Benchmark Templates** (in deployment directories):
-- **Template Location**: `deployments/*/benchmark-templates/`
-- **Available Templates**: guide.yaml, guidellm.yaml, sanity.yaml, shared_prefix.yaml
-- **Benchmark Script**: `run_only.sh` (use with instantiated config files)
-
-**Online Resources**:
-- **WVA GitHub**: https://github.com/llm-d/llm-d-workload-variant-autoscaler
-- **llm-d GitHub**: https://github.com/llm-d/llm-d
-- **llm-d-benchmark GitHub**: https://github.com/llm-d/llm-d-benchmark
+- **WVA**: https://github.com/llm-d/llm-d-workload-variant-autoscaler
+- **llm-d**: https://github.com/llm-d/llm-d
+- **llm-d-benchmark**: https://github.com/llm-d/llm-d-benchmark

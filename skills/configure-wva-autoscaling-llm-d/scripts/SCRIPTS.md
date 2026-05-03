@@ -65,43 +65,24 @@ If autoscaling isn't working:
 
 ## Available Scripts
 
-### Runtime Verification Scripts
-
-**`verify-wva.sh`** - Comprehensive runtime verification
+**`verify-wva.sh`** - Comprehensive verification
 ```bash
-./verify-wva.sh <namespace>
+./verify-wva.sh <namespace>                    # Use default WVA namespace
+./verify-wva.sh <namespace> <wva-namespace>    # Specify WVA controller namespace
 ```
-Checks:
-- VariantAutoscaling status (METRICSREADY, CURRENTREPLICAS, DESIREDREPLICAS, SATURATION)
-- HPA status and metrics
-- WVA controller logs
-- External metrics API availability
 
-**`troubleshoot-metrics.sh`** - Diagnose metrics issues
+**`troubleshoot-metrics.sh`** - Metrics diagnostics
 ```bash
 ./troubleshoot-metrics.sh <namespace> <pod-name>
 ```
-Checks:
-- Pod metrics endpoint
-- PodMonitor configuration
-- Provides test request examples
 
-**`troubleshoot-scaling.sh`** - Diagnose scaling issues
+**`troubleshoot-scaling.sh`** - Scaling diagnostics
 ```bash
-./troubleshoot-scaling.sh <namespace>
+./troubleshoot-scaling.sh <namespace>                    # Use default WVA namespace
+./troubleshoot-scaling.sh <namespace> <wva-namespace>    # Specify WVA controller namespace
 ```
-Checks:
-- WVA scaling decisions in logs
-- Current saturation levels
-- HPA metric visibility
-- Recent HPA events
 
-### Deprecated Scripts
-
-**`apply-wva-config.sh`** - DEPRECATED (see [DEPRECATED.md](./DEPRECATED.md))
-- Use WVA repository's installation scripts instead
-- Or use Helm charts with proper values
-- Or apply configuration templates manually
+All scripts include input validation and improved error handling.
 
 ## Configuration Examples
 
@@ -112,10 +93,8 @@ The `configs/` directory contains example configurations:
 - **`hpa-basic.yaml`** - Basic HPA configuration
 
 ### Complete Examples
-- **`example1-single-variant.yaml`** - Single variant with moderate scaling
-- **`example2-multi-variant.yaml`** - Multiple variants with cost optimization
-- **`example3-aggressive-scaling.yaml`** - Low-latency aggressive scaling
-- **`example4-scale-to-zero.yaml`** - Scale-to-zero configuration
+- **`example3-aggressive-scaling.yaml`** - Low-latency aggressive scaling (available)
+- Other examples referenced in SKILL.md (create as needed)
 
 ## Critical Configuration Requirements
 
@@ -224,45 +203,14 @@ This is normal behavior. HPA automatically averages the values from multiple con
 HPA shows correct metrics but deployment doesn't scale.
 
 **Troubleshooting steps:**
-1. Check HPA status: `oc describe hpa <hpa-name> -n <namespace>`
-2. Verify deployment has at least 1 replica
-3. Check WVA controller logs for errors
-4. Verify saturation thresholds are appropriate for your workload
-## WVA Repository Scripts Reference
+1. Check HPA: `kubectl describe hpa <hpa-name> -n <namespace>`
+2. Verify deployment has ≥1 replica
+3. Check WVA controller logs
+4. Verify saturation thresholds fit workload
 
-For deployment and installation, use scripts from `${WVA_REPO_PATH}/deploy/`:
+## WVA Repository Scripts
 
-### Main Installation Script
-**`${WVA_REPO_PATH}/deploy/install.sh`**
-- Handles complete WVA deployment
-- Supports Kind, Kubernetes, and OpenShift
-- Deploys monitoring stack (Prometheus, Grafana)
-- Installs scaler backend (Prometheus Adapter or KEDA)
-- Optionally deploys llm-d infrastructure
-
-### Multi-Model Deployment
-**`${WVA_REPO_PATH}/deploy/install-multi-model.sh`**
-- Deploy multiple model services simultaneously
-- Each model gets its own VariantAutoscaling and HPA
-- Supports namespace-scoped or cluster-wide deployment
-
-### Kind Cluster Management
-**`${WVA_REPO_PATH}/deploy/kind-emulator/setup.sh`**
-- Create Kind cluster with GPU emulation
-- Configure node labels and capacities
-
-**`${WVA_REPO_PATH}/deploy/kind-emulator/teardown.sh`**
-- Clean up Kind cluster
-
-### Library Scripts
-**`${WVA_REPO_PATH}/deploy/lib/`** contains modular functions:
-- `verify.sh` - Deployment verification
-- `infra_wva.sh` - WVA controller deployment
-- `infra_llmd.sh` - llm-d infrastructure
-- `infra_monitoring.sh` - Monitoring stack
-- `infra_scaler_backend.sh` - Scaler backend setup
-
-See the main [SKILL.md](../SKILL.md) for detailed Makefile targets and usage examples.
+Use `${WVA_REPO_PATH}/deploy/install.sh` for deployment. See [SKILL.md](../SKILL.md) for Makefile targets.
 
 
 ## Saturation Configuration

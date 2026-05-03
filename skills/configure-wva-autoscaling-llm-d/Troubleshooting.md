@@ -1,6 +1,7 @@
 # WVA Configuration Troubleshooting
 
-Quick reference for common WVA configuration issues. For detailed troubleshooting, see the official WVA troubleshooting guide at `${WVA_REPO_PATH}/docs/user-guide/troubleshooting.md`.
+Quick reference for common WVA issues. For detailed troubleshooting, see `${WVA_REPO_PATH}/docs/user-guide/troubleshooting.md`.
+
 
 ## Quick Diagnostics
 
