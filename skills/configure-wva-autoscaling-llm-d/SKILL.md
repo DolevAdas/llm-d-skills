@@ -166,20 +166,20 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
    - Accelerator type
 
 2. **ALWAYS ask user for:**
-   - **Scaling backend**: HPA or KEDA
+   1. **Scaling backend**: HPA or KEDA
      - **CRITICAL**: Always ask which backend the user prefers
-     - **If HPA is preferable for their llm-d deployment, explain why:**
-       - HPA is built into Kubernetes (no additional dependencies)
-       - HPA is simpler to configure and troubleshoot
-       - HPA is recommended for most llm-d deployments unless specific KEDA features are needed (e.g., event-driven scaling from external sources)
-       - KEDA adds complexity but provides more scaling sources (Kafka, RabbitMQ, etc.)
-   - **Scaling behavior**: Fast/balanced/cost-optimized
-   - **Stabilization windows**: Scale-up (default 120s, range 0-300s), Scale-down (default 300s, range 120-600s)
-   - **Replica limits**: minReplicas, maxReplicas
-   - **Saturation thresholds** (if custom needed):
-     - `kvCacheThreshold` (default 0.80), `queueLengthThreshold` (default 5)
-     - `kvSpareTrigger` (default 0.10), `queueSpareTrigger` (default 3)
-   - **Multi-variant**: Variant cost, other variants for same model
+     - If HPA is preferable for their llm-d deployment, explain why:
+   2. **Scaling behavior**: Fast/balanced/cost-optimized
+   3. **Stabilization windows**: Scale-up (default 120s, range 0-300s), Scale-down (default 300s, range 120-600s)
+   4. **Replica limits**: minReplicas, maxReplicas
+   5. **Saturation Thresholds** (ConfigMap: `wva-saturation-scaling-config`):
+      - `kvCacheThreshold` (0.80): Saturation trigger when KV cache exceeds 80%
+      - `queueLengthThreshold` (5): Saturation trigger when queue exceeds 5 requests
+      - `kvSpareTrigger` (0.10): Proactive scaling when spare capacity drops below 10%
+      - `queueSpareTrigger` (3): Proactive scaling when spare queue capacity drops below 3
+      - **Namespace overrides**: Create ConfigMap in target namespace for local thresholds
+
+   6. **Multi-variant**: Variant cost, other variants for same model
 
 3. **Must ask if not detected:**
    - Model ID, variant cost, scale-to-zero requirement
@@ -191,12 +191,6 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 - `modelID`: Model identifier (e.g., `meta-llama/Llama-3.1-8B`)
 - `variantCost`: Relative cost (H100=100, A100=70, L4=30) for multi-variant optimization
 
-**Saturation Thresholds** (ConfigMap: `wva-saturation-scaling-config`):
-- `kvCacheThreshold` (0.80): Saturation trigger when KV cache exceeds 80%
-- `queueLengthThreshold` (5): Saturation trigger when queue exceeds 5 requests
-- `kvSpareTrigger` (0.10): Proactive scaling when spare capacity drops below 10%
-- `queueSpareTrigger` (3): Proactive scaling when spare queue capacity drops below 3
-- **Namespace overrides**: Create ConfigMap in target namespace for local thresholds
 
 **Controller Config** (ConfigMap: `wva-variantautoscaling-config`):
 - `PROMETHEUS_BASE_URL`: Prometheus endpoint (must be accessible from WVA)
@@ -274,7 +268,7 @@ make deploy-wva-emulated-on-kind
 make deploy-e2e-infra ENVIRONMENT=kubernetes
 ```
 
-### Method 2: Helm Deployment (Recommended - No Go Required)
+### Method 2: Helm Deployment 
 
 **Use Helm when Go is not available or for simpler deployments:**
 
