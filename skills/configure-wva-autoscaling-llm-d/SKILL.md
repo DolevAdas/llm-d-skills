@@ -28,13 +28,15 @@ description: Configure and optimize Workload Variant Autoscaler (WVA) for llm-d 
 
 ## Prerequisites: Repository Setup
 
-**Required Repositories**: llm-d, llm-d-workload-variant-autoscaler, llm-d-benchmark
+**Required Repositories**: llm-d, llm-d-workload-variant-autoscaler
 
 **Setup Process**:
 1. Check for repositories in common locations
 2. Ask user for paths if not found
 3. Clone missing repositories with user approval
 4. Set environment variables: `LLMD_REPO_PATH`, `WVA_REPO_PATH`
+
+**Note**: llm-d-benchmark is optional for testing/validation. Benchmark templates are in deployment directories.
 
 ## Overview
 This skill helps you configure Workload Variant Autoscaler (WVA) for llm-d inference deployments based on your specific requirements. WVA provides intelligent autoscaling using KV cache saturation and queue depth metrics (number of requests waiting to be processed), with support for multi-variant cost optimization.
@@ -153,74 +155,123 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 
 **Choose one of the above options based on your requirements.**
 
-### 2. Understand Requirements
-
-Ask clarifying questions to understand:
-- **Scaling goals**: Aggressive scaling, cost optimization, or balanced?
-- **Variants**: Single accelerator type or multi-variant (H100/A100/L4)?
-- **Scale-to-zero**: Should replicas scale to zero during idle periods?
-- **Platform**: OpenShift, GKE, Kind, or other Kubernetes?
-
 ### 2. Configuration Strategy
 
-Configure three components:
-- **VariantAutoscaling**: Core WVA resource ([template](scripts/configs/variantautoscaling-basic.yaml))
-- **Saturation Thresholds**:
-  - `kvCacheThreshold` (0.80): Scale when KV cache is 80% full
-  - `queueLengthThreshold` (5): Scale when 5+ requests are queued
-  - `kvSpareTrigger` (0.10): Proactive scaling - add capacity when within 10% of KV threshold
-  - `queueSpareTrigger` (3): Proactive scaling - add capacity when within 3 requests of queue threshold
-- **HPA**: Kubernetes HPA for actual scaling ([template](scripts/configs/hpa-basic.yaml))
+**Choose Scaling Backend:**
+- **HPA** (Kubernetes native): Standard Kubernetes clusters, simpler setup
+- **KEDA**: OpenShift (via CMA), native scale-to-zero support, event-driven scaling
+
+**Important**: All threshold values below are examples. Ask the user for their preferred values based on their workload characteristics. If the user is unsure, use the default values shown in parentheses.
+
+Configure these components:
+
+**1. VariantAutoscaling Resource** ([template](scripts/configs/variantautoscaling-basic.yaml))
+- **`scaleTargetRef`** (required): Points to the Deployment/StatefulSet/LWS that WVA will scale. Must match the actual resource name and kind.
+- **`modelID`** (required): Identifies which model this variant serves (e.g., `meta-llama/Llama-3.1-8B`). Used for metrics grouping and multi-variant coordination.
+- **`variantCost`** (optional): Relative cost value (e.g., H100=100, A100=70, L4=30). WVA scales cheaper variants first when multiple variants serve the same model.
+
+**2. Saturation Thresholds** (via ConfigMap: `wva-saturation-scaling-config`)
+- `kvCacheThreshold` (0.80): When KV cache usage exceeds this (80%), replica is considered saturated. Triggers scale-up.
+- `queueLengthThreshold` (5): When request queue exceeds this length, replica is saturated. Prevents latency spikes.
+- `kvSpareTrigger` (0.10): Proactive scaling - adds capacity when average spare KV capacity drops below 10%. Scales before saturation.
+- `queueSpareTrigger` (3): Proactive scaling - adds capacity when average spare queue capacity drops below 3 requests.
+- **Namespace-local overrides**: Create same ConfigMap in target namespace to override global thresholds for specific namespaces (e.g., production vs dev).
+
+**3. Controller Configuration** (via ConfigMap: `wva-variantautoscaling-config`)
+- `PROMETHEUS_BASE_URL` (required): Where WVA fetches metrics from (e.g., `http://prometheus:9090`). Must be accessible from WVA controller.
+- `GLOBAL_OPT_INTERVAL` (default: 60s): How frequently WVA recalculates desired replicas. Lower = faster response, higher = more stable.
+
+**4. Scaling Backend**
+- **HPA** ([template](scripts/configs/hpa-basic.yaml), [guide](${WVA_REPO_PATH}/docs/user-guide/hpa-integration.md))
+  - Reads `wva_desired_replicas` metric and adjusts deployment replicas
+  - Stabilization: 0-60s scale-up (fast response), 240-300s scale-down (prevent flapping)
+- **KEDA** ([guide](${WVA_REPO_PATH}/docs/user-guide/keda-integration.md))
+  - Alternative to HPA with native scale-to-zero support
+  - Preferred for OpenShift (via Custom Metrics Autoscaler)
 
 ### 3. Common Configuration Patterns
 
-Choose based on user requirements:
+**Choose configuration based on user needs. If unclear, ask:**
+- Scaling priority: fast response, cost optimization, or balanced?
+- Hardware: single GPU type or multi-variant (H100/A100/L4)?
+- Scale-to-zero needed? (dev/test only)
 
-1. **Single Variant** ([example](scripts/configs/example1-single-variant.yaml)) - Balanced thresholds, moderate scaling
-2. **Multi-Variant Cost Optimization** ([example](scripts/configs/example2-multi-variant.yaml)) - Different variantCost values, WVA scales cheaper first
-3. **Aggressive Scaling** ([example](scripts/configs/example3-aggressive-scaling.yaml)) - Lower thresholds (0.70), faster scale-up (60s)
-4. **Conservative Scaling** - Higher thresholds (0.85), longer stabilization (300s+)
-5. **Scale-to-Zero** ([example](scripts/configs/example4-scale-to-zero.yaml)) - For dev/test only, requires alpha feature gate
+| Pattern | Use When | Template | Key Settings |
+|---------|----------|----------|--------------|
+| **Single Variant** | One GPU type, balanced scaling | [example1](scripts/configs/example1-single-variant.yaml) | `kvCacheThreshold: 0.80`, `queueLengthThreshold: 5` |
+| **Multi-Variant** | Multiple GPUs, minimize cost | [example2](scripts/configs/example2-multi-variant.yaml) | Set `variantCost` per GPU (H100=100, A100=70, L4=30) |
+| **Aggressive** | Fast response to load spikes | [example3](scripts/configs/example3-aggressive-scaling.yaml) | Lower thresholds (0.70), faster scale-up (60s) |
+| **Conservative** | Stable production, avoid over-scaling | Custom | Higher thresholds (0.85), longer stabilization (300s+) |
+| **Scale-to-Zero** | Dev/test cost savings | [example4](scripts/configs/example4-scale-to-zero.yaml) | `minReplicas: 0`, requires alpha feature gate |
 
-**Key**: Always include `inference.optimization/acceleratorName` label and ensure HPA selector matches `variant_name` + `exported_namespace`.
+**Configuration Rules:**
+- Include `inference.optimization/acceleratorName` label on deployments
+- HPA selector must match `variant_name` + `exported_namespace`
+- Multi-variant: WVA scales cheaper variants first based on `variantCost`
+- Align thresholds with Inference Scheduler (EPP) - see section 4
 
-See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed configuration examples.
+See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed examples.
 
-### 4. Threshold Alignment with Inference Scheduler
+### 4. Threshold Alignment with Inference Scheduler (EPP)
 
-**Critical**: WVA and Inference Scheduler (End Point Picker) should use the same thresholds for optimal performance.
+**Critical**: WVA and EPP must use identical thresholds. Each model has its own EPP instance (1-to-1 relationship).
 
-**Why**: EPP routes requests away from saturated replicas. If WVA and EPP use different thresholds, you get:
-- EPP marks replica saturated → stops routing → WVA still sees capacity → doesn't scale
-- Or: WVA scales up → EPP still routing to old replicas → new capacity unused
+**Why misalignment causes issues:**
+- EPP stops routing to saturated replicas → WVA still sees capacity → doesn't scale
+- WVA scales up → EPP still routes to old replicas → new capacity unused
 
-**How to align**:
-1. Check EPP configuration in GAIE values
-2. Match WVA saturation thresholds to EPP thresholds
-3. Update both together when tuning
+**Threshold mapping:**
+- WVA `kvCacheThreshold` = EPP `kvCacheUtilThreshold` (default: 0.80)
+- WVA `queueLengthThreshold` = EPP `queueDepthThreshold` (default: 5)
+
+**How to align per model:**
+1. Update WVA ConfigMap: `wva-saturation-scaling-config` (changes apply immediately)
+2. Update EPP config for that model's EPP instance
+3. Restart EPP pod: `kubectl rollout restart deployment/gaie-<model-name>-epp -n <namespace>`
+
+**Note**: EPP requires pod restart for config changes; WVA auto-reloads ConfigMap changes.
 
 ## Installation and Deployment
 
-**Single Source of Truth**: All deployment scripts and detailed documentation are in the WVA repository (`${WVA_REPO_PATH}`).
+**Single Source of Truth**: All deployment scripts in WVA repository (`${WVA_REPO_PATH}`).
 
 ### Quick Start - Deploy WVA
-
-Use the WVA repository's Makefile targets (recommended):
 
 ```bash
 cd ${WVA_REPO_PATH}
 
-# Deploy on Kubernetes
+# Kubernetes
 make deploy-wva-on-k8s IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
 
-# Deploy on OpenShift
+# OpenShift
 make deploy-wva-on-openshift IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
 
-# Deploy on Kind (local testing)
+# Kind (local testing)
 make deploy-wva-emulated-on-kind
 
-# Deploy with full infrastructure (WVA + llm-d + monitoring)
+# Full stack (WVA + llm-d + monitoring)
 make deploy-e2e-infra ENVIRONMENT=kubernetes
+```
+
+### Upgrading WVA
+
+**Critical**: Helm doesn't auto-update CRDs. Manual CRD update required before upgrade:
+
+```bash
+# 1. Apply updated CRDs first
+kubectl apply -f charts/workload-variant-autoscaler/crds/
+
+# 2. Then upgrade Helm release
+helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
+  --namespace workload-variant-autoscaler-system
+```
+
+**Breaking change v0.5.1**: `scaleTargetRef` now required. Update existing VAs:
+```yaml
+spec:
+  scaleTargetRef:
+    kind: Deployment  # or StatefulSet, LeaderWorkerSet
+    name: <deployment-name>
 ```
 
 ### Key WVA Repository Resources
