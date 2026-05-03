@@ -157,37 +157,37 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 
 ### 2. Configuration Strategy
 
-**Choose Scaling Backend:**
+**1. Choose Scaling Backend:**
 - **HPA** (Kubernetes native): Standard Kubernetes clusters, simpler setup
 - **KEDA**: OpenShift (via CMA), native scale-to-zero support, event-driven scaling
 
-**Important**: All threshold values below are examples. Ask the user for their preferred values based on their workload characteristics. If the user is unsure, use the default values shown in parentheses.
-
-Configure these components:
-
-**1. VariantAutoscaling Resource** ([template](scripts/configs/variantautoscaling-basic.yaml))
-- **`scaleTargetRef`** (required): Points to the Deployment/StatefulSet/LWS that WVA will scale. Must match the actual resource name and kind.
-- **`modelID`** (required): Identifies which model this variant serves (e.g., `meta-llama/Llama-3.1-8B`). Used for metrics grouping and multi-variant coordination.
-- **`variantCost`** (optional): Relative cost value (e.g., H100=100, A100=70, L4=30). WVA scales cheaper variants first when multiple variants serve the same model.
-
-**2. Saturation Thresholds** (via ConfigMap: `wva-saturation-scaling-config`)
-- `kvCacheThreshold` (0.80): When KV cache usage exceeds this (80%), replica is considered saturated. Triggers scale-up.
-- `queueLengthThreshold` (5): When request queue exceeds this length, replica is saturated. Prevents latency spikes.
-- `kvSpareTrigger` (0.10): Proactive scaling - adds capacity when average spare KV capacity drops below 10%. Scales before saturation.
-- `queueSpareTrigger` (3): Proactive scaling - adds capacity when average spare queue capacity drops below 3 requests.
-- **Namespace-local overrides**: Create same ConfigMap in target namespace to override global thresholds for specific namespaces (e.g., production vs dev).
-
-**3. Controller Configuration** (via ConfigMap: `wva-variantautoscaling-config`)
-- `PROMETHEUS_BASE_URL` (required): Where WVA fetches metrics from (e.g., `http://prometheus:9090`). Must be accessible from WVA controller.
-- `GLOBAL_OPT_INTERVAL` (default: 60s): How frequently WVA recalculates desired replicas. Lower = faster response, higher = more stable.
-
-**4. Scaling Backend**
 - **HPA** ([template](scripts/configs/hpa-basic.yaml), [guide](${WVA_REPO_PATH}/docs/user-guide/hpa-integration.md))
   - Reads `wva_desired_replicas` metric and adjusts deployment replicas
   - Stabilization: 0-60s scale-up (fast response), 240-300s scale-down (prevent flapping)
 - **KEDA** ([guide](${WVA_REPO_PATH}/docs/user-guide/keda-integration.md))
   - Alternative to HPA with native scale-to-zero support
   - Preferred for OpenShift (via Custom Metrics Autoscaler)
+
+**Important**: All threshold values below are examples. Ask the user for their preferred values based on their workload characteristics. If the user is unsure, use the default values shown in parentheses.
+
+Configure these components:
+
+**2. VariantAutoscaling Resource** ([template](scripts/configs/variantautoscaling-basic.yaml))
+- **`scaleTargetRef`** (required): Points to the Deployment/StatefulSet/LWS that WVA will scale. Must match the actual resource name and kind.
+- **`modelID`** (required): Identifies which model this variant serves (e.g., `meta-llama/Llama-3.1-8B`). Used for metrics grouping and multi-variant coordination.
+- **`variantCost`** (optional): Relative cost value (e.g., H100=100, A100=70, L4=30). WVA scales cheaper variants first when multiple variants serve the same model.
+
+**3. Saturation Thresholds** (via ConfigMap: `wva-saturation-scaling-config`)
+- `kvCacheThreshold` (0.80): When KV cache usage exceeds this (80%), replica is considered saturated. Triggers scale-up.
+- `queueLengthThreshold` (5): When request queue exceeds this length, replica is saturated. Prevents latency spikes.
+- `kvSpareTrigger` (0.10): Proactive scaling - adds capacity when average spare KV capacity drops below 10%. Scales before saturation.
+- `queueSpareTrigger` (3): Proactive scaling - adds capacity when average spare queue capacity drops below 3 requests.
+- **Namespace-local overrides**: Create same ConfigMap in target namespace to override global thresholds for specific namespaces (e.g., production vs dev).
+
+**4. Controller Configuration** (via ConfigMap: `wva-variantautoscaling-config`)
+- `PROMETHEUS_BASE_URL` (required): Where WVA fetches metrics from (e.g., `http://prometheus:9090`). Must be accessible from WVA controller.
+- `GLOBAL_OPT_INTERVAL` (default: 60s): How frequently WVA recalculates desired replicas. Lower = faster response, higher = more stable.
+
 
 ### 3. Common Configuration Patterns
 
