@@ -19,6 +19,7 @@ MODEL_ID=""
 VARIANT_COST="100"
 PROMETHEUS_URL=""
 PROMETHEUS_INSECURE_SKIP_VERIFY="true"
+ACCELERATOR_NAME=""
 KV_CACHE_THRESHOLD="0.80"
 QUEUE_LENGTH_THRESHOLD="5"
 KV_SPARE_TRIGGER="0.10"
@@ -75,6 +76,10 @@ while [[ $# -gt 0 ]]; do
             PROMETHEUS_URL="$2"
             shift 2
             ;;
+        --accelerator)
+            ACCELERATOR_NAME="$2"
+            shift 2
+            ;;
         --min-replicas)
             MIN_REPLICAS="$2"
             shift 2
@@ -117,6 +122,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --model-id <id>              Model ID (required)"
             echo "  --variant-cost <cost>        Variant cost (default: 100)"
             echo "  --prometheus-url <url>       Prometheus URL (optional)"
+            echo "  --accelerator <name>         Accelerator name (default: auto-detect from deployment)"
             echo "  --min-replicas <n>           Minimum replicas (default: 2)"
             echo "  --max-replicas <n>           Maximum replicas (default: 10)"
             echo "  --kv-threshold <n>           KV cache threshold (default: 0.80)"
@@ -169,6 +175,29 @@ if [ "$NON_INTERACTIVE" = "false" ]; then
     prompt_value SCALE_DOWN_STABILIZATION "Scale-down stabilization (seconds)" "$SCALE_DOWN_STABILIZATION"
 fi
 
+# Auto-detect accelerator name from deployment if not provided
+if [ -z "$ACCELERATOR_NAME" ] && [ -n "$NAMESPACE" ] && [ -n "$DEPLOYMENT_NAME" ]; then
+    echo ""
+    echo "Auto-detecting accelerator name from deployment..."
+    ACCELERATOR_NAME=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.template.metadata.labels.inference\.optimization/acceleratorName}' 2>/dev/null || echo "")
+    
+    if [ -z "$ACCELERATOR_NAME" ]; then
+        # Fallback: try to detect from node selector or tolerations
+        NODE_SELECTOR=$(kubectl get deployment "$DEPLOYMENT_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.nodeSelector}' 2>/dev/null || echo "")
+        if echo "$NODE_SELECTOR" | grep -q "nvidia"; then
+            ACCELERATOR_NAME="nvidia"
+        elif echo "$NODE_SELECTOR" | grep -q "amd"; then
+            ACCELERATOR_NAME="amd"
+        else
+            # Default fallback
+            ACCELERATOR_NAME="nvidia"
+            echo "⚠ Could not auto-detect accelerator, defaulting to 'nvidia'"
+        fi
+    else
+        echo "✓ Detected accelerator: $ACCELERATOR_NAME"
+    fi
+fi
+
 # Set output file if not specified
 if [ -z "$OUTPUT_FILE" ]; then
     OUTPUT_FILE="deploy-wva-${DEPLOYMENT_NAME}.sh"
@@ -184,6 +213,7 @@ echo "WVA Repository:         $WVA_REPO_PATH"
 echo "Model ID:               $MODEL_ID"
 echo "Variant Cost:           $VARIANT_COST"
 echo "Prometheus URL:         ${PROMETHEUS_URL:-<not set>}"
+echo "Accelerator Name:       $ACCELERATOR_NAME"
 echo "Min/Max Replicas:       $MIN_REPLICAS/$MAX_REPLICAS"
 echo "KV Cache Threshold:     $KV_CACHE_THRESHOLD"
 echo "Queue Length Threshold: $QUEUE_LENGTH_THRESHOLD"
@@ -213,6 +243,7 @@ sed -e "s|{{NAMESPACE}}|$NAMESPACE|g" \
     -e "s|{{VARIANT_COST}}|$VARIANT_COST|g" \
     -e "s|{{PROMETHEUS_URL}}|$PROMETHEUS_URL|g" \
     -e "s|{{PROMETHEUS_INSECURE_SKIP_VERIFY}}|$PROMETHEUS_INSECURE_SKIP_VERIFY|g" \
+    -e "s|{{ACCELERATOR_NAME}}|$ACCELERATOR_NAME|g" \
     -e "s|{{KV_CACHE_THRESHOLD}}|$KV_CACHE_THRESHOLD|g" \
     -e "s|{{QUEUE_LENGTH_THRESHOLD}}|$QUEUE_LENGTH_THRESHOLD|g" \
     -e "s|{{KV_SPARE_TRIGGER}}|$KV_SPARE_TRIGGER|g" \

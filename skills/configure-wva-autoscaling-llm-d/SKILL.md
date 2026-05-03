@@ -213,17 +213,26 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 | **Scale-to-Zero** | Dev/test cost savings | [example4](scripts/configs/example4-scale-to-zero.yaml) | `minReplicas: 0`, requires alpha feature gate |
 
 **Configuration Rules:**
-- **CRITICAL**: Include `inference.optimization/acceleratorName` label on deployments (e.g., `nvidia`, `amd`, `cpu`)
-  - Without this label, WVA controller will NOT detect the VariantAutoscaling resource
-  - Add to deployment: `kubectl label deployment <name> -n <namespace> inference.optimization/acceleratorName=nvidia`
+- **CRITICAL**: Include `inference.optimization/acceleratorName` label on VariantAutoscaling resource (e.g., `nvidia`, `amd`, `cpu`)
+  - Without this label, WVA controller will NOT process the VariantAutoscaling resource
+  - The deployment script auto-detects this from the deployment's labels
+  - Can be overridden with `--accelerator <name>` parameter
+  - Fallback: defaults to `nvidia` if not detected
 - **CRITICAL**: HPA selector must match BOTH labels: `variant_name` + `exported_namespace`
   - `variant_name` must match the VariantAutoscaling resource name
   - `exported_namespace` must match the deployment namespace
 - **CRITICAL**: `variantCost` must be a STRING, not an integer (e.g., `"100"` not `100`)
 - **CRITICAL**: API version must be `llmd.ai/v1alpha1` (NOT `inference.llmd.ai/v1alpha1`)
+- **CRITICAL**: `scaleTargetRef` must include `apiVersion: apps/v1` field
+  - Without apiVersion, WVA will fail with "no matches for kind \"Deployment\" in version \"\""
+  - Correct format: `scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: <name>}`
 - **CRITICAL**: VariantAutoscaling spec should NOT include `metrics` field - metrics are defined in HPA only
   - The `spec.metrics` field is invalid and will cause errors
   - Only include: `scaleTargetRef`, `modelID`, `variantCost`, `minReplicas`, `maxReplicas`
+- **CRITICAL**: HPA cannot scale from 0 replicas
+  - If deployment is at 0 replicas, manually scale to 1 first: `kubectl scale deployment <name> --replicas=1`
+  - HPA will then manage scaling from 1 to maxReplicas
+  - For true scale-to-zero, use KEDA instead of HPA
 - Multi-variant: WVA scales cheaper variants first based on `variantCost`
 - Align thresholds with Inference Scheduler (EPP) - see section 4
 

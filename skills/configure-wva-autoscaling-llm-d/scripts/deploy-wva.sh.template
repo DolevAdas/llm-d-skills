@@ -206,8 +206,11 @@ kind: VariantAutoscaling
 metadata:
   name: ${DEPLOYMENT}-va
   namespace: ${NAMESPACE}
+  labels:
+    inference.optimization/acceleratorName: ${ACCELERATOR_NAME}
 spec:
   scaleTargetRef:
+    apiVersion: apps/v1
     kind: Deployment
     name: ${DEPLOYMENT}
   modelID: "${MODEL_ID}"
@@ -290,9 +293,52 @@ echo "Checking WVA controller logs..."
 kubectl logs -n "$NAMESPACE" -l app.kubernetes.io/name=workload-variant-autoscaler --tail=30 | grep -E "VariantAutoscaling|No active"
 echo ""
 
-echo "Waiting for metrics to be ready (120 seconds for Prometheus scrape)..."
-echo "You can monitor progress with: kubectl get variantautoscaling -n $NAMESPACE -w"
-sleep 120
+# Check if deployment is at 0 replicas and scale it up if needed
+CURRENT_REPLICAS=$(kubectl get deployment "$DEPLOYMENT" -n "$NAMESPACE" -o jsonpath='{.spec.replicas}')
+if [ "$CURRENT_REPLICAS" -eq 0 ]; then
+    echo "⚠ Deployment is at 0 replicas. HPA cannot scale from 0."
+    echo "Scaling deployment to 1 replica to enable HPA..."
+    kubectl scale deployment "$DEPLOYMENT" -n "$NAMESPACE" --replicas=1
+    echo "Waiting for pod to be ready..."
+    kubectl wait --for=condition=ready pod -l llm-d.ai/role=decode -n "$NAMESPACE" --timeout=300s || true
+    echo "✓ Deployment scaled to 1 replica"
+    echo ""
+fi
+
+echo ""
+echo "=========================================="
+echo "Waiting for Prometheus to scrape metrics"
+echo "=========================================="
+echo "This takes ~120 seconds for the first metric collection"
+echo ""
+
+# Progress bar function
+show_progress() {
+    local duration=$1
+    local interval=2
+    local steps=$((duration / interval))
+    local bar_width=50
+    
+    for ((i=0; i<=steps; i++)); do
+        local percent=$((i * 100 / steps))
+        local filled=$((bar_width * i / steps))
+        local empty=$((bar_width - filled))
+        
+        printf "\r["
+        printf "%${filled}s" | tr ' ' '='
+        printf "%${empty}s" | tr ' ' ' '
+        printf "] %3d%% (%ds/%ds)" "$percent" "$((i * interval))" "$duration"
+        
+        if [ $i -lt $steps ]; then
+            sleep $interval
+        fi
+    done
+    echo ""
+}
+
+show_progress 120
+echo ""
+echo "✓ Wait complete - checking metrics status..."
 
 echo ""
 echo "Final status:"
