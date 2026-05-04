@@ -214,10 +214,11 @@ helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
 
 **Configuration Rules:**
 - **CRITICAL**: Include `inference.optimization/acceleratorName` label on VariantAutoscaling resource (e.g., `nvidia`, `amd`, `cpu`)
-  - Without this label, WVA controller will NOT process the VariantAutoscaling resource
+  - Without this label, WVA controller will NOT process the VariantAutoscaling resource and METRICSREADY will remain False
   - The deployment script auto-detects this from the deployment's labels
   - Can be overridden with `--accelerator <name>` parameter
   - Fallback: defaults to `nvidia` if not detected
+  - **If METRICSREADY stays False, verify this label exists**: `kubectl get variantautoscaling <name> -n <namespace> -o jsonpath='{.metadata.labels}'`
 - **CRITICAL**: HPA selector must match BOTH labels: `variant_name` + `exported_namespace`
   - `variant_name` must match the VariantAutoscaling resource name
   - `exported_namespace` must match the deployment namespace
