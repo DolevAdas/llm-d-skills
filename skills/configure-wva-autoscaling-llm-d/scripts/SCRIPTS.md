@@ -85,11 +85,6 @@ The scripts in this directory provide:
 - ✅ Easy to version control with deployment
 - ✅ Can be regenerated with different parameters
 
-#### [`deploy-wva.sh`](./deploy-wva.sh) (Legacy)
-**Purpose**: Original deployment script (requires separate YAML files)
-
-**Note**: This script is kept for backward compatibility. New deployments should use the template-based approach with `generate-deploy-script.sh`.
-
 ### Testing Scripts
 
 #### [`test-wva-scaling.sh`](./test-wva-scaling.sh)
