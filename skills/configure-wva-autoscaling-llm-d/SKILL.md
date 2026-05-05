@@ -86,74 +86,110 @@ skills/configure-wva-autoscaling-llm-d/
 
 When a user asks for WVA configuration help, follow this workflow:
 
-### 1. Choose Namespace Isolation Strategy
+### 1. Determine Namespace Scope and Get User Confirmation
 
-**FIRST**, determine the WVA deployment scope based on the user's environment and requirements:
+**CRITICAL - User Confirmation Required**: WVA operations can be destructive (scaling deployments, modifying resources). **ALWAYS ask the user to confirm the namespaces that will be in scope** before proceeding with any WVA deployment or configuration.
 
-#### Option 1: Namespace-Scoped Controller (Recommended for Multi-Tenant/Testing)
-**Use when**: Testing, development, or multi-tenant clusters where teams need isolation.
+**SAFETY FIRST**: This skill ONLY supports **Namespace-Scoped Mode** to prevent accidental changes to unintended llm-d stacks. WVA will ONLY watch the specific namespace(s) you explicitly configure.
 
-**CRITICAL**: To watch a specific namespace, deploy WVA **INTO that namespace** with `namespaceScoped: true`. When `namespaceScoped: true`, WVA watches its own deployment namespace.
+#### Namespace-Scoped Deployment (Only Supported Mode)
 
-**Configuration**:
+Deploy WVA with `NAMESPACE_SCOPED=true` to watch ONLY specific namespaces. WVA will be completely isolated and cannot affect other namespaces.
+
+**Single Namespace Tracking:**
+
 ```bash
-# Deploy WVA directly into your target namespace
-# It will automatically watch only that namespace
-helm upgrade -i workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace <your-target-namespace> \
-  --create-namespace \
-  --set controller.namespaceScoped=true
+cd ${WVA_REPO_PATH}
+
+# Deploy WVA to watch only one namespace
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  NAMESPACE=my-target-namespace \
+  NAMESPACE_SCOPED=true
 ```
 
 **Behavior**:
-- ✅ WVA deployed in your namespace watches only that namespace
-- ✅ Complete isolation from other namespaces
-- ✅ Perfect for multi-tenant clusters where each team has their own controller
-- ✅ No interference with other teams' deployments
-- ✅ Simple and predictable behavior
+- ✅ WVA deployed in `my-target-namespace`
+- ✅ Watches ONLY `my-target-namespace` (completely ignores all other namespaces)
+- ✅ Perfect isolation - zero risk of affecting other namespaces
+- ✅ Multiple WVA instances can safely coexist (one per namespace)
+- ✅ Each namespace has its own independent WVA controller
 
-**Example**: To watch `example-namespace` namespace, deploy WVA into `example-namespace` with `namespaceScoped: true`
+**Multi-Namespace Tracking (Multiple Isolated Deployments):**
 
-#### Option 2: Cluster-Wide with Namespace Exclusions
-**Use when**: You want cluster-wide monitoring but need to exclude specific namespaces.
+To track multiple namespaces, deploy a separate WVA instance in each namespace:
 
-**Configuration**:
 ```bash
-# Exclude specific namespaces from WVA monitoring
-kubectl annotate namespace other-team-namespace wva.llmd.ai/exclude=true
-kubectl annotate namespace kube-system wva.llmd.ai/exclude=true
+cd ${WVA_REPO_PATH}
+
+# Deploy WVA for namespace1
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  NAMESPACE=namespace1 \
+  NAMESPACE_SCOPED=true
+
+# Deploy WVA for namespace2
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  NAMESPACE=namespace2 \
+  NAMESPACE_SCOPED=true
+
+# Deploy WVA for namespace3
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  NAMESPACE=namespace3 \
+  NAMESPACE_SCOPED=true
 ```
 
-**Behavior**:
-- ✅ WVA watches all namespaces by default
-- ✅ Explicitly excluded namespaces are ignored
-- ✅ Good for shared clusters with some protected namespaces
+**Example Scenario**:
+```
+Cluster with multiple isolated WVA deployments:
+├── namespace: team-a-prod
+│   ├── WVA controller (watches ONLY team-a-prod)
+│   ├── VariantAutoscaling: qwen-32b → Deployment: qwen-32b-vllm
+│   └── VariantAutoscaling: llama-8b → Deployment: llama-8b-vllm
+├── namespace: team-b-prod
+│   ├── WVA controller (watches ONLY team-b-prod)
+│   └── VariantAutoscaling: mistral-7b → Deployment: mistral-7b-vllm
+└── namespace: team-c-dev
+    ├── WVA controller (watches ONLY team-c-dev)
+    └── VariantAutoscaling: qwen-32b → Deployment: qwen-32b-vllm
 
-#### Option 3: Multi-Controller Isolation (Advanced)
-**Use when**: Complete isolation between teams/projects is required.
-
-**Configuration**:
-```bash
-# Your team's controller (only manages your namespace)
-helm upgrade -i wva-my-team ./charts/workload-variant-autoscaler \
-  --namespace wva-system \
-  --set wva.controllerInstance=my-team \
-  --set controller.watchNamespace=my-namespace
-
-# Other team's controller (manages their namespace)
-helm upgrade -i wva-other-team ./charts/workload-variant-autoscaler \
-  --namespace wva-system \
-  --set wva.controllerInstance=other-team \
-  --set controller.watchNamespace=other-namespace
+Each WVA is completely isolated and cannot see or affect other namespaces.
 ```
 
-**Behavior**:
-- ✅ Complete isolation between teams
-- ✅ Each controller has its own metrics with `controller_instance` label
-- ✅ No interference between different teams' autoscaling
-- ✅ Separate monitoring and troubleshooting per team
+#### User Confirmation Prompt
 
-**Choose one of the above options based on your requirements.**
+Before deploying or configuring WVA, present the user with:
+
+```
+⚠️  WVA Configuration Confirmation Required
+
+Deployment Mode: Namespace-Scoped (Safe Mode)
+
+Target namespaces for WVA deployment:
+  • namespace1 (X existing llm-d deployments detected)
+  • namespace2 (Y existing llm-d deployments detected)
+  • namespace3 (Z existing llm-d deployments detected)
+
+⚠️  WARNING: WVA can scale deployments and modify resources in these namespaces.
+
+Configuration:
+  - Separate WVA controller will be deployed in each namespace
+  - Each WVA watches ONLY its own namespace
+  - Complete isolation - no cross-namespace effects
+  - Total WVA instances to deploy: [N]
+
+Do you want to proceed with this configuration? (yes/no)
+```
+
+**IMPORTANT**:
+- Always list ALL namespaces where WVA will be deployed
+- Show how many llm-d deployments are detected in each namespace
+- Clearly state that each namespace gets its own isolated WVA controller
+- Wait for explicit user confirmation before proceeding
+- If user says no, ask which namespaces should be included/excluded
+- **NEVER deploy WVA in cluster-wide mode** - this skill only supports namespace-scoped mode for safety
 
 ### 2. Configuration Strategy
 
@@ -256,76 +292,125 @@ See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed examples.
 
 **Single Source of Truth**: All deployment scripts in WVA repository (`${WVA_REPO_PATH}`).
 
-**IMPORTANT - Deployment Methods:**
+### Makefile Deployment (Primary Method - Fully Supported)
 
-### Method 1: Makefile Deployment (Requires Go)
+**Prerequisites**:
+- Go must be installed on the system
+- kubectl configured to access your cluster
+- For OpenShift: `oc` CLI installed
 
-**Prerequisites**: Go must be installed on the system.
-
-```bash
-cd ${WVA_REPO_PATH}
-
-# Kubernetes
-make deploy-wva-on-k8s IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
-
-# OpenShift
-make deploy-wva-on-openshift IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
-
-# Kind (local testing)
-make deploy-wva-emulated-on-kind
-
-# Full stack (WVA + llm-d + monitoring)
-make deploy-e2e-infra ENVIRONMENT=kubernetes
-```
-
-### Method 2: Helm Deployment 
-
-**Use Helm when Go is not available or for simpler deployments:**
+**Available Makefile Targets:**
 
 ```bash
 cd ${WVA_REPO_PATH}
 
-# Namespace-scoped deployment (RECOMMENDED)
-# Deploy WVA INTO the target namespace to watch only that namespace
-helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace <your-target-namespace> \
-  --create-namespace \
-  --set controller.namespaceScoped=true
+# View all available targets and their descriptions
+make help
 
-# Example: Deploy WVA to watch only example-namespace namespace
-helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace example-namespace \
-  --create-namespace \
-  --set controller.namespaceScoped=true
+# Kubernetes deployment (namespace-scoped - RECOMMENDED)
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  NAMESPACE=my-target-namespace \
+  NAMESPACE_SCOPED=true
+
+# OpenShift deployment (namespace-scoped)
+make deploy-wva-on-openshift \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  NAMESPACE=my-target-namespace \
+  NAMESPACE_SCOPED=true
+
+# Kind (local testing with emulated GPUs)
+make deploy-wva-emulated-on-kind \
+  NAMESPACE_SCOPED=true
+
+# Full e2e infrastructure (WVA + llm-d + monitoring)
+make deploy-e2e-infra \
+  ENVIRONMENT=kubernetes \
+  NAMESPACE_SCOPED=true
+
+# Multi-model deployment (multiple models, each with WVA)
+make deploy-multi-model-infra \
+  ENVIRONMENT=kubernetes \
+  MODELS="Qwen/Qwen3-0.6B,unsloth/Meta-Llama-3.1-8B" \
+  NAMESPACE_SCOPED=true
 ```
 
-**CRITICAL Configuration Notes:**
-- **Deploy WVA INTO the namespace you want to watch** - don't use `watchNamespace` parameter
-- **Set `controller.namespaceScoped=true`** - this makes WVA watch its own deployment namespace
-- **Verify after deployment**: Check logs to confirm it's watching the correct namespace
-- This approach is simpler and more predictable than using `watchNamespace` parameter
+**Key Makefile Variables:**
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `IMG` | WVA container image | `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` | Custom image tag |
+| `NAMESPACE` | Target namespace for deployment | `workload-variant-autoscaler-system` | `my-namespace` |
+| `NAMESPACE_SCOPED` | **CRITICAL**: Limit WVA to single namespace | `false` | **`true` (REQUIRED)** |
+| `ENVIRONMENT` | Platform type | `kubernetes` | `openshift`, `kind-emulator` |
+| `DEPLOY_LLM_D` | Deploy llm-d stack with WVA | `true` | `false` |
+| `MODELS` | Comma-separated model list for multi-model | `unsloth/Meta-Llama-3.1-8B` | `model1,model2` |
+
+**CRITICAL**: Always set `NAMESPACE_SCOPED=true` to ensure WVA only watches the target namespace.
+
+**Undeploy Commands:**
+
+```bash
+cd ${WVA_REPO_PATH}
+
+# Undeploy from Kubernetes
+make undeploy-wva-on-k8s \
+  NAMESPACE=my-target-namespace
+
+# Undeploy from OpenShift
+make undeploy-wva-on-openshift \
+  NAMESPACE=my-target-namespace
+
+# Undeploy from Kind
+make undeploy-wva-emulated-on-kind
+
+# Undeploy multi-model infrastructure
+make undeploy-multi-model-infra \
+  MODELS="model1,model2"
+```
+
+### Alternative: Direct Script Execution
+
+If you need more control, you can call the deployment script directly:
+
+```bash
+cd ${WVA_REPO_PATH}/deploy
+
+# Set required environment variables
+export NAMESPACE="my-target-namespace"
+export NAMESPACE_SCOPED="true"
+export IMG="ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest"
+export ENVIRONMENT="kubernetes"  # or "openshift"
+
+# Run deployment script
+./install.sh
+```
+
+**Note**: The Makefile targets are wrappers around `deploy/install.sh` and provide better defaults and validation.
 
 **IMPORTANT - Three-Phase Process:**
 
 ### Phase 1: Deploy WVA Controller (Infrastructure)
 
-This phase deploys the WVA controller infrastructure. **CRITICAL**: Deploy WVA INTO the target namespace (where your llm-d deployment lives) with `namespaceScoped: true`.
+This phase deploys the WVA controller infrastructure. **CRITICAL**: Deploy WVA INTO the target namespace (where your llm-d deployment lives) with `NAMESPACE_SCOPED=true`.
 
 **Deployment command:**
 ```bash
 cd ${WVA_REPO_PATH}
 
-# Deploy WVA into the target namespace
-helm upgrade --install workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace <target-namespace> \
-  --create-namespace \
-  --set controller.namespaceScoped=true
+# Deploy WVA into the target namespace (namespace-scoped mode)
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  NAMESPACE=<target-namespace> \
+  NAMESPACE_SCOPED=true \
+  DEPLOY_LLM_D=false
 ```
 
 **What gets deployed in Phase 1:**
 - WVA controller in target namespace (watches only that namespace)
 - Default ConfigMaps with standard thresholds
 - ServiceMonitor for WVA metrics
+- Required RBAC roles and bindings
 
 **Verification:**
 ```bash
@@ -463,21 +548,30 @@ A successful WVA deployment should show:
 
 ### Upgrading WVA
 
-**Critical**: Helm doesn't auto-update CRDs. Manual CRD update required before upgrade:
+**To upgrade WVA to a new version:**
 
 ```bash
-# 1. Apply updated CRDs first
-kubectl apply -f charts/workload-variant-autoscaler/crds/
+cd ${WVA_REPO_PATH}
 
-# 2. Then upgrade Helm release
-helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace workload-variant-autoscaler-system
+# 1. Pull latest changes
+git pull origin main
+
+# 2. Apply updated CRDs first
+kubectl apply -f config/crd/bases/
+
+# 3. Redeploy WVA with new image
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:v0.6.0 \
+  NAMESPACE=<target-namespace> \
+  NAMESPACE_SCOPED=true \
+  DEPLOY_LLM_D=false
 ```
 
 **Breaking change v0.5.1**: `scaleTargetRef` now required. Update existing VAs:
 ```yaml
 spec:
   scaleTargetRef:
+    apiVersion: apps/v1
     kind: Deployment  # or StatefulSet, LeaderWorkerSet
     name: <deployment-name>
 ```
@@ -493,16 +587,16 @@ spec:
 
 **llm-d Repository** (`${LLMD_REPO_PATH}`):
 - **WVA Integration**: `guides/workload-autoscaling/README.wva.md`
-- **Helmfile**: `guides/workload-autoscaling/helmfile.yaml.gotmpl`
-- **Values**: `guides/workload-autoscaling/workload-autoscaling/values.yaml`
+- **Configuration Examples**: `guides/workload-autoscaling/`
 
 **Common Makefile Targets** (run in `${WVA_REPO_PATH}`):
 ```bash
-make deploy-wva-on-k8s                    # Kubernetes deployment
-make deploy-wva-on-openshift              # OpenShift deployment
-make deploy-e2e-infra ENVIRONMENT=kubernetes  # Full stack
-make deploy-multi-model-infra MODELS="m1,m2"  # Multi-model
-make test-e2e-smoke                       # Quick tests
+# Always use NAMESPACE_SCOPED=true for safety
+make deploy-wva-on-k8s NAMESPACE_SCOPED=true                    # Kubernetes deployment
+make deploy-wva-on-openshift NAMESPACE_SCOPED=true              # OpenShift deployment
+make deploy-e2e-infra ENVIRONMENT=kubernetes NAMESPACE_SCOPED=true  # Full stack
+make deploy-multi-model-infra MODELS="m1,m2" NAMESPACE_SCOPED=true  # Multi-model
+make test-e2e-smoke                                             # Quick tests
 ```
 
 **Benchmark Templates**: `deployments/*/benchmark-templates/` - See run-llm-d-benchmark skill
