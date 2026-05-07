@@ -26,7 +26,7 @@ description: Configure and optimize Workload Variant Autoscaler (WVA) for llm-d 
 
 3. **Verify cluster resources** - Check available GPU/RDMA resources before applying changes.
 
-## Prerequisites: Repository Setup
+## Prerequisites
 
 **Required Repositories**: llm-d, llm-d-workload-variant-autoscaler
 
@@ -38,7 +38,25 @@ description: Configure and optimize Workload Variant Autoscaler (WVA) for llm-d 
 
 **Note**: llm-d-benchmark is optional for testing/validation. Benchmark templates are in deployment directories.
 
+### Skill Structure
+
+```
+skills/configure-wva-autoscaling-llm-d/
+├── SKILL.md              # This file - main skill with configuration guidance
+├── Troubleshooting.md    # Quick troubleshooting reference
+├── scripts/              # Configuration templates and utility scripts
+│   ├── SCRIPTS.md       # Detailed scripts usage guide
+│   ├── configs/         # YAML configuration templates (examples)
+│   ├── verify-wva.sh    # Runtime verification script
+│   ├── troubleshoot-metrics.sh  # Metrics troubleshooting
+│   └── troubleshoot-scaling.sh  # Scaling troubleshooting
+└── evals/               # Skill evaluation tests
+```
+
+**Note**: This skill primarily references scripts from `${WVA_REPO_PATH}` for deployment and installation. The skill scripts focus on runtime verification and troubleshooting.
+
 ## Overview
+
 This skill helps you configure Workload Variant Autoscaler (WVA) for llm-d inference deployments based on your specific requirements. WVA provides intelligent autoscaling using KV cache saturation and queue depth metrics (number of requests waiting to be processed), with support for multi-variant cost optimization.
 
 ## When to Use This Skill
@@ -65,28 +83,9 @@ Use this skill when you need to:
 - Same model with different parallelism strategies
 - Same model with different LoRA adapters
 
-
-### Skill Structure
-
-```
-skills/configure-wva-autoscaling-llm-d/
-├── SKILL.md              # This file - main skill with configuration guidance
-├── Troubleshooting.md    # Quick troubleshooting reference
-├── scripts/              # Configuration templates and utility scripts
-│   ├── SCRIPTS.md       # Detailed scripts usage guide
-│   ├── configs/         # YAML configuration templates (examples)
-│   ├── verify-wva.sh    # Runtime verification script
-│   ├── troubleshoot-metrics.sh  # Metrics troubleshooting
-│   └── troubleshoot-scaling.sh  # Scaling troubleshooting
-└── evals/               # Skill evaluation tests
-```
-
-**Note**: This skill primarily references scripts from `${WVA_REPO_PATH}` for deployment and installation. The skill scripts focus on runtime verification and troubleshooting.
 ## Core Workflow
 
-When a user asks for WVA configuration help, follow this workflow:
-
-### 1. Determine Namespace Scope and Get User Confirmation
+### 1. Confirm Namespace Scope
 
 **CRITICAL - User Confirmation Required**: WVA operations can be destructive (scaling deployments, modifying resources). **ALWAYS ask the user to confirm the namespaces that will be in scope** before proceeding with any WVA deployment or configuration.
 
@@ -94,17 +93,14 @@ When a user asks for WVA configuration help, follow this workflow:
 
 #### Namespace-Scoped Deployment (Only Supported Mode)
 
-Deploy WVA with `NAMESPACE_SCOPED=true` to watch ONLY specific namespaces. WVA will be completely isolated and cannot affect other namespaces.
-
-**Single Namespace Tracking:**
+Deploy WVA with `NAMESPACE_SCOPED=true` to watch ONLY a specific namespace:
 
 ```bash
 cd ${WVA_REPO_PATH}
 
-# Deploy WVA to watch only one namespace
 make deploy-wva-on-k8s \
   IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=my-target-namespace \
+  WVA_NS=my-target-namespace \
   NAMESPACE_SCOPED=true
 ```
 
@@ -115,48 +111,18 @@ make deploy-wva-on-k8s \
 - ✅ Multiple WVA instances can safely coexist (one per namespace)
 - ✅ Each namespace has its own independent WVA controller
 
-**Multi-Namespace Tracking (Multiple Isolated Deployments):**
+**Multi-namespace**: Run the same command once per namespace, changing `WVA_NS` each time. Each WVA instance is fully isolated:
 
-To track multiple namespaces, deploy a separate WVA instance in each namespace:
-
-```bash
-cd ${WVA_REPO_PATH}
-
-# Deploy WVA for namespace1
-make deploy-wva-on-k8s \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=namespace1 \
-  NAMESPACE_SCOPED=true
-
-# Deploy WVA for namespace2
-make deploy-wva-on-k8s \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=namespace2 \
-  NAMESPACE_SCOPED=true
-
-# Deploy WVA for namespace3
-make deploy-wva-on-k8s \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=namespace3 \
-  NAMESPACE_SCOPED=true
-```
-
-**Example Scenario**:
 ```
 Cluster with multiple isolated WVA deployments:
-├── namespace: team-a-prod
-│   ├── WVA controller (watches ONLY team-a-prod)
-│   ├── VariantAutoscaling: qwen-32b → Deployment: qwen-32b-vllm
-│   └── VariantAutoscaling: llama-8b → Deployment: llama-8b-vllm
-├── namespace: team-b-prod
-│   ├── WVA controller (watches ONLY team-b-prod)
-│   └── VariantAutoscaling: mistral-7b → Deployment: mistral-7b-vllm
-└── namespace: team-c-dev
-    ├── WVA controller (watches ONLY team-c-dev)
-    └── VariantAutoscaling: qwen-32b → Deployment: qwen-32b-vllm
-
-Each WVA is completely isolated and cannot see or affect other namespaces.
+├── namespace: team-a-prod  → WVA watches ONLY team-a-prod
+├── namespace: team-b-prod  → WVA watches ONLY team-b-prod
+└── namespace: team-c-dev   → WVA watches ONLY team-c-dev
 ```
+
+**Existing WVA controller**: If a controller already exists, **ASK USER** based on isolation requirements:
+- Reuse existing controller (VariantAutoscaling auto-discovered), OR
+- Deploy a new namespace-scoped controller (complete isolation)
 
 #### User Confirmation Prompt
 
@@ -191,7 +157,7 @@ Do you want to proceed with this configuration? (yes/no)
 - If user says no, ask which namespaces should be included/excluded
 - **NEVER deploy WVA in cluster-wide mode** - this skill only supports namespace-scoped mode for safety
 
-### 2. Configuration Strategy
+### 2. Gather Configuration
 
 **Configuration Detection and User Input:**
 
@@ -201,236 +167,124 @@ Do you want to proceed with this configuration? (yes/no)
    - Current replicas, existing HPA
    - Accelerator type
 
-2. **ALWAYS ask user for:**
-   1. **Scaling backend**: HPA or KEDA
-     - **CRITICAL**: Always ask which backend the user prefers
-     - If HPA is preferable for their llm-d deployment, explain why
-   2. **Scaling behavior**: Fast/balanced/cost-optimized
-   3. **Stabilization windows**: Scale-up (default 120s, range 0-300s), Scale-down (default 300s, range 120-600s)
-   4. **Replica limits**: minReplicas, maxReplicas
-   5. **Saturation Thresholds** (ConfigMap: `wva-saturation-scaling-config`):
-      - `kvCacheThreshold` (0.80): Saturation trigger when KV cache exceeds 80%
-      - `queueLengthThreshold` (5): Saturation trigger when queue exceeds 5 requests
-      - `kvSpareTrigger` (0.10): Proactive scaling when spare capacity drops below 10%
-      - `queueSpareTrigger` (3): Proactive scaling when spare queue capacity drops below 3
-      - **Namespace overrides**: Create ConfigMap in target namespace for local thresholds
+2. **ALWAYS ask user for** (these become Makefile vars in the deploy command):
 
-   6. **Multi-variant**: Variant cost, other variants for same model
+   **Ask the scaling backend FIRST** — never assume:
+
+   | Backend | `SCALER_BACKEND` value | When to use |
+   |---------|----------------------|-------------|
+   | **HPA** (Prometheus Adapter) | `prometheus-adapter` | Standard; works out-of-box with kube-prometheus-stack |
+   | **KEDA** | `keda` | KEDA already on cluster, or scale-to-zero is needed |
+
+   **First, ask the user:** "Do you already know the values you want to set, or would you like help deciding them based on your requirements?"
+   - If they **know the values** → collect them directly and proceed to deploy
+   - If they **need guidance** → ask about their priorities to help decide each value:
+     - **Latency sensitivity**: fast response to load spikes → lower thresholds, shorter stabilization
+     - **Stability**: production workload, avoid flapping → higher thresholds, longer stabilization
+     - **Cost**: multiple GPU types available → use multi-variant with `variantCost`
+     - **Scale-to-zero**: dev/test only → `HPA_MIN_REPLICAS=0` requires KEDA
+
+   Always show the value being set — never hide it from the user.
+
+   Then collect:
+   - **Stabilization window**: `HPA_STABILIZATION_SECONDS` (default 240s; shorter = faster reaction, longer = more stable) — sets both scale-up and scale-down windows **symmetrically**; for asymmetric behavior (e.g., fast scale-up / slow scale-down), use `helm upgrade` after deploy to set them independently (see [example3](scripts/configs/example3-aggressive-scaling.yaml) for the HPA YAML structure)
+   - **Replica limits**: `HPA_MIN_REPLICAS` (default 1), `HPA_MAX_REPLICAS` (default 2 — override via `--set hpa.maxReplicas=N` post-deploy)
+   - **Saturation Thresholds**:
+     - `KV_CACHE_THRESHOLD` (default 0.80): Replica saturated when KV cache ≥ threshold
+     - `QUEUE_LENGTH_THRESHOLD` (default 5): Replica saturated when queue ≥ threshold
+     - `KV_SPARE_TRIGGER` (default 0.10): Proactive scale-up when spare KV capacity < trigger
+     - `QUEUE_SPARE_TRIGGER` (default 3): Proactive scale-up when spare queue capacity < trigger
+   - **Multi-variant**: Variant cost (default `"10.0"` — override via `--set va.variantCost="<value>"` post-deploy)
 
 3. **Must ask if not detected:**
-   - Model ID, variant cost, scale-to-zero requirement
+   - `MODEL_ID`, `ACCELERATOR_TYPE`, scale-to-zero requirement
 
-**Key Components:**
+### 3. Deploy
 
-**VariantAutoscaling** ([template](scripts/configs/variantautoscaling-basic.yaml)):
-- `scaleTargetRef`: Target deployment/statefulset/LWS
-- `modelID`: Model identifier (e.g., `meta-llama/Llama-3.1-8B`)
-- `variantCost`: Relative cost (H100=100, A100=70, L4=30) for multi-variant optimization
-
-
-**Controller Config** (ConfigMap: `wva-variantautoscaling-config`):
-- `PROMETHEUS_BASE_URL`: Prometheus endpoint (must be accessible from WVA)
-- `GLOBAL_OPT_INTERVAL` (60s): WVA reconciliation frequency (not Prometheus scrape interval)
-
-
-### 3. Common Configuration Patterns
-
-**Choose configuration based on user needs. If unclear, ask:**
-- Scaling priority: fast response, cost optimization, or balanced?
-- Hardware: single GPU type or multi-variant (H100/A100/L4)?
-- Scale-to-zero needed? (dev/test only)
-
-| Pattern | Use When | Template | Key Settings |
-|---------|----------|----------|--------------|
-| **Single Variant** | One GPU type, balanced scaling | [example1](scripts/configs/example1-single-variant.yaml) | `kvCacheThreshold: 0.80`, `queueLengthThreshold: 5` |
-| **Multi-Variant** | Multiple GPUs, minimize cost | [example2](scripts/configs/example2-multi-variant.yaml) | Set `variantCost` per GPU (H100=100, A100=70, L4=30) |
-| **Aggressive** | Fast response to load spikes | [example3](scripts/configs/example3-aggressive-scaling.yaml) | Lower thresholds (0.70), faster scale-up (60s) |
-| **Conservative** | Stable production, avoid over-scaling | Custom | Higher thresholds (0.85), longer stabilization (300s+) |
-| **Scale-to-Zero** | Dev/test cost savings | [example4](scripts/configs/example4-scale-to-zero.yaml) | `minReplicas: 0`, requires alpha feature gate |
-
-**Configuration Rules:**
-- **CRITICAL**: Include `inference.optimization/acceleratorName` label on VariantAutoscaling resource (e.g., `nvidia`, `amd`, `cpu`)
-  - Without this label, WVA controller will NOT process the VariantAutoscaling resource and METRICSREADY will remain False
-  - The deployment script auto-detects this from the deployment's labels
-  - Can be overridden with `--accelerator <name>` parameter
-  - Fallback: defaults to `nvidia` if not detected
-  - **If METRICSREADY stays False, verify this label exists**: `kubectl get variantautoscaling <name> -n <namespace> -o jsonpath='{.metadata.labels}'`
-- **CRITICAL**: HPA selector must match BOTH labels: `variant_name` + `exported_namespace`
-  - `variant_name` must match the VariantAutoscaling resource name
-  - `exported_namespace` must match the deployment namespace
-- **CRITICAL**: `variantCost` must be a STRING, not an integer (e.g., `"100"` not `100`)
-- **CRITICAL**: API version must be `llmd.ai/v1alpha1` (NOT `inference.llmd.ai/v1alpha1`)
-- **CRITICAL**: `scaleTargetRef` must include `apiVersion: apps/v1` field
-  - Without apiVersion, WVA will fail with "no matches for kind \"Deployment\" in version \"\""
-  - Correct format: `scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: <name>}`
-- **CRITICAL**: VariantAutoscaling spec should NOT include `metrics` field - metrics are defined in HPA only
-  - The `spec.metrics` field is invalid and will cause errors
-  - Only include: `scaleTargetRef`, `modelID`, `variantCost`, `minReplicas`, `maxReplicas`
-- **CRITICAL**: HPA cannot scale from 0 replicas
-  - If deployment is at 0 replicas, manually scale to 1 first: `kubectl scale deployment <name> --replicas=1`
-  - HPA will then manage scaling from 1 to maxReplicas
-  - For true scale-to-zero, use KEDA instead of HPA
-- Multi-variant: WVA scales cheaper variants first based on `variantCost`
-- Align thresholds with Inference Scheduler (EPP) - see section 4
-
-See [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed examples.
-
-### 4. Threshold Alignment with Inference Scheduler (EPP)
-
-**Critical**: WVA and EPP must use identical thresholds. One EPP instance per model (shared across variants of same model).
-
-**Threshold mapping:**
-- WVA `kvCacheThreshold` = EPP `kvCacheUtilThreshold`
-- WVA `queueLengthThreshold` = EPP `queueDepthThreshold`
-
-**To align:**
-1. Update WVA ConfigMap `wva-saturation-scaling-config` (auto-reloads)
-2. Update EPP config
-3. Restart EPP: `kubectl rollout restart deployment/gaie-<model-name>-epp -n <namespace>`
-
-## Installation and Deployment
-
-**Single Source of Truth**: All deployment scripts in WVA repository (`${WVA_REPO_PATH}`).
-
-### Makefile Deployment (Primary Method - Fully Supported)
+Deploy WVA controller + VariantAutoscaling + HPA all at once, with the user's configuration baked in from the start.
 
 **Prerequisites**:
 - Go must be installed on the system
 - kubectl configured to access your cluster
 - For OpenShift: `oc` CLI installed
 
-**Available Makefile Targets:**
+**CRITICAL**: Set `DEPLOY_VA=true DEPLOY_HPA=true` so the chart creates the scaling resources at deploy time.
 
 ```bash
 cd ${WVA_REPO_PATH}
 
-# View all available targets and their descriptions
-make help
-
-# Kubernetes deployment (namespace-scoped - RECOMMENDED)
 make deploy-wva-on-k8s \
   IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=my-target-namespace \
-  NAMESPACE_SCOPED=true
-
-# OpenShift deployment (namespace-scoped)
-make deploy-wva-on-openshift \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=my-target-namespace \
-  NAMESPACE_SCOPED=true
-
-# Kind (local testing with emulated GPUs)
-make deploy-wva-emulated-on-kind \
-  NAMESPACE_SCOPED=true
-
-# Full e2e infrastructure (WVA + llm-d + monitoring)
-make deploy-e2e-infra \
-  ENVIRONMENT=kubernetes \
-  NAMESPACE_SCOPED=true
-
-# Multi-model deployment (multiple models, each with WVA)
-make deploy-multi-model-infra \
-  ENVIRONMENT=kubernetes \
-  MODELS="Qwen/Qwen3-0.6B,unsloth/Meta-Llama-3.1-8B" \
-  NAMESPACE_SCOPED=true
-```
-
-**Key Makefile Variables:**
-
-| Variable | Description | Default | Example |
-|----------|-------------|---------|---------|
-| `IMG` | WVA container image | `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` | Custom image tag |
-| `NAMESPACE` | Target namespace for deployment | `workload-variant-autoscaler-system` | `my-namespace` |
-| `NAMESPACE_SCOPED` | **CRITICAL**: Limit WVA to single namespace | `false` | **`true` (REQUIRED)** |
-| `ENVIRONMENT` | Platform type | `kubernetes` | `openshift`, `kind-emulator` |
-| `DEPLOY_LLM_D` | Deploy llm-d stack with WVA | `true` | `false` |
-| `MODELS` | Comma-separated model list for multi-model | `unsloth/Meta-Llama-3.1-8B` | `model1,model2` |
-
-**CRITICAL**: Always set `NAMESPACE_SCOPED=true` to ensure WVA only watches the target namespace.
-
-**Undeploy Commands:**
-
-```bash
-cd ${WVA_REPO_PATH}
-
-# Undeploy from Kubernetes
-make undeploy-wva-on-k8s \
-  NAMESPACE=my-target-namespace
-
-# Undeploy from OpenShift
-make undeploy-wva-on-openshift \
-  NAMESPACE=my-target-namespace
-
-# Undeploy from Kind
-make undeploy-wva-emulated-on-kind
-
-# Undeploy multi-model infrastructure
-make undeploy-multi-model-infra \
-  MODELS="model1,model2"
-```
-
-### Alternative: Direct Script Execution
-
-If you need more control, you can call the deployment script directly:
-
-```bash
-cd ${WVA_REPO_PATH}/deploy
-
-# Set required environment variables
-export NAMESPACE="my-target-namespace"
-export NAMESPACE_SCOPED="true"
-export IMG="ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest"
-export ENVIRONMENT="kubernetes"  # or "openshift"
-
-# Run deployment script
-./install.sh
-```
-
-**Note**: The Makefile targets are wrappers around `deploy/install.sh` and provide better defaults and validation.
-
-**IMPORTANT - Three-Phase Process:**
-
-### Phase 1: Deploy WVA Controller (Infrastructure)
-
-This phase deploys the WVA controller infrastructure. **CRITICAL**: Deploy WVA INTO the target namespace (where your llm-d deployment lives) with `NAMESPACE_SCOPED=true`.
-
-**Deployment command:**
-```bash
-cd ${WVA_REPO_PATH}
-
-# Deploy WVA into the target namespace (namespace-scoped mode)
-make deploy-wva-on-k8s \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=<target-namespace> \
+  WVA_NS=<target-namespace> \
   NAMESPACE_SCOPED=true \
-  DEPLOY_LLM_D=false
+  DEPLOY_LLM_D=false \
+  DEPLOY_VA=true \
+  DEPLOY_HPA=true \
+  MODEL_ID="<model-id>" \
+  ACCELERATOR_TYPE=<accelerator> \
+  KV_CACHE_THRESHOLD=<kv_threshold> \
+  QUEUE_LENGTH_THRESHOLD=<queue_threshold> \
+  KV_SPARE_TRIGGER=<kv_spare> \
+  QUEUE_SPARE_TRIGGER=<queue_spare> \
+  HPA_MIN_REPLICAS=<min_replicas> \
+  HPA_STABILIZATION_SECONDS=<stabilization_seconds> \
+  SCALER_BACKEND=<prometheus-adapter|keda>
 ```
 
-**What gets deployed in Phase 1:**
-- WVA controller in target namespace (watches only that namespace)
-- Default ConfigMaps with standard thresholds
+**Example — aggressive scaling on H100, user chose HPA:**
+```bash
+cd ${WVA_REPO_PATH}
+
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
+  WVA_NS=my-llm-namespace \
+  NAMESPACE_SCOPED=true \
+  DEPLOY_LLM_D=false \
+  DEPLOY_VA=true \
+  DEPLOY_HPA=true \
+  MODEL_ID="Qwen/Qwen3-32B" \
+  ACCELERATOR_TYPE=H100 \
+  KV_CACHE_THRESHOLD=0.70 \
+  QUEUE_LENGTH_THRESHOLD=3 \
+  KV_SPARE_TRIGGER=0.15 \
+  QUEUE_SPARE_TRIGGER=2 \
+  HPA_MIN_REPLICAS=1 \
+  HPA_STABILIZATION_SECONDS=60 \
+  SCALER_BACKEND=prometheus-adapter
+```
+
+**Same example with KEDA:** replace the last line with `SCALER_BACKEND=keda`
+
+**What gets deployed:**
+- WVA controller (namespace-scoped, watches only `WVA_NS`)
+- VariantAutoscaling resource for the model
+- HPA or ScaledObject (depending on `SCALER_BACKEND`) with user-specified thresholds
+- Saturation ConfigMap with custom thresholds
+- Prometheus Adapter (if `SCALER_BACKEND=prometheus-adapter`) or KEDA (if `SCALER_BACKEND=keda`)
 - ServiceMonitor for WVA metrics
-- Required RBAC roles and bindings
 
-**Verification:**
+**Non-default `maxReplicas` or `variantCost`**: the Makefile has no dedicated vars for these. Override them with a `helm upgrade` immediately after the deploy:
 ```bash
-# Verify WVA is running and watching correct namespace
-kubectl get deployment -n <target-namespace> -l app.kubernetes.io/name=workload-variant-autoscaler
-kubectl logs -n <target-namespace> -l app.kubernetes.io/name=workload-variant-autoscaler --tail=20 | grep "Watching"
-# Should show: "Watching single namespace: <target-namespace>"
+helm upgrade workload-variant-autoscaler ${WVA_REPO_PATH}/charts/workload-variant-autoscaler \
+  -n <target-namespace> \
+  --reuse-values \
+  --set hpa.maxReplicas=10 \
+  --set va.variantCost="70"
 ```
 
-### Phase 2: Prepare Deployment for WVA
+> The Makefile targets are thin wrappers around `deploy/install.sh` — no need to call it directly.
 
-**CRITICAL**: Before applying VariantAutoscaling, ensure the deployment has required labels and metrics:
+### 4. Verify
+
+#### Metrics Infrastructure
+
+If the llm-d deployment doesn't already expose Prometheus metrics (e.g., it was deployed outside the standard llm-d guide), ensure the metrics pipeline exists:
 
 ```bash
-# 1. Add required accelerator label to deployment
-kubectl label deployment <deployment-name> -n <namespace> \
-  inference.optimization/acceleratorName=nvidia
+# Check if ServiceMonitor exists for the deployment
+kubectl get servicemonitor -n <namespace> | grep <deployment-name>
 
-# 2. Ensure vLLM metrics are exposed (if not already)
-# Create Service for metrics endpoint
+# If missing, create Service + ServiceMonitor for vLLM metrics
 kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Service
@@ -444,10 +298,7 @@ spec:
   - name: metrics
     port: 8000
     targetPort: 8000
-EOF
-
-# 3. Create ServiceMonitor for Prometheus scraping
-kubectl apply -f - <<EOF
+---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -464,39 +315,8 @@ spec:
 EOF
 ```
 
-### Phase 3: Apply User-Specific Configuration
+#### WVA + VA + HPA
 
-After Phase 1 and 2 complete, apply the configuration built in Section 2 based on user requirements:
-
-```bash
-# 1. Apply saturation thresholds ConfigMap (if custom values needed)
-kubectl apply -f <generated-saturation-config>.yaml
-
-# 2. Apply VariantAutoscaling resource (built from user input in Section 2)
-kubectl apply -f <generated-variantautoscaling>.yaml
-
-# 3. Apply HPA with user-specified stabilization windows
-kubectl apply -f <generated-hpa>.yaml
-
-# 4. Verify WVA detects the resource
-kubectl logs -n workload-variant-autoscaler-system \
-  -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
-
-# 5. Verify configuration
-./scripts/verify-wva.sh <namespace>
-```
-
-**Configuration Flow:**
-1. Section 2: Gather user requirements and auto-detect deployment details
-2. Phase 1: Deploy WVA infrastructure (generic)
-3. Phase 2: Prepare deployment with labels and metrics
-4. Phase 3: Apply user-specific VariantAutoscaling, HPA, and threshold configs
-5. Verification: Ensure WVA detects resources and scaling works
-### Immediate Verification After Each Phase
-
-**CRITICAL**: Verify each phase before proceeding to the next.
-
-**Phase 1 Verification (WVA Controller)**:
 ```bash
 # Check controller is running in target namespace
 kubectl get deployment -n <target-namespace> -l app.kubernetes.io/name=workload-variant-autoscaler
@@ -505,222 +325,58 @@ kubectl get deployment -n <target-namespace> -l app.kubernetes.io/name=workload-
 kubectl logs -n <target-namespace> \
   -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
 # Should show: "Watching single namespace: <target-namespace>"
-```
 
-**Phase 2 Verification (Deployment Preparation)**:
-```bash
-# Verify accelerator label was added
-kubectl get deployment <name> -n <namespace> --show-labels | grep acceleratorName
+# Check VA and HPA were created
+kubectl get variantautoscaling,hpa -n <target-namespace>
 
-# Verify metrics infrastructure exists
-kubectl get service,servicemonitor -n <namespace> | grep metrics
-
-# Test metrics endpoint
-kubectl exec -n <namespace> <pod-name> -- curl -s localhost:8000/metrics | grep vllm
-```
-
-**Phase 3 Verification (Configuration Applied)**:
-```bash
-# Check resources were created
-kubectl get variantautoscaling,hpa -n <namespace>
-
-# CRITICAL: Verify WVA detected the VariantAutoscaling
-kubectl logs -n workload-variant-autoscaler-system \
+# Verify WVA detected the VariantAutoscaling
+kubectl logs -n <target-namespace> \
   -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
 # Should NOT show "No active VariantAutoscalings found"
+```
 
+#### Metrics Ready
+
+```bash
 # Check METRICSREADY status (wait 2 minutes for Prometheus scrape)
 sleep 120
-kubectl get variantautoscaling -n <namespace>
+kubectl get variantautoscaling -n <target-namespace>
 # Should show METRICSREADY: True
+
+# Verify metrics infrastructure
+kubectl get service,servicemonitor -n <target-namespace> | grep metrics
 ```
 
-### Success Metrics
+#### Verification Scripts
 
-A successful WVA deployment should show:
-- ✅ WVA controller logs show "VariantAutoscaling" detected (not "No active VariantAutoscalings found")
-- ✅ METRICSREADY: True within 2 minutes
-- ✅ HPA shows valid metrics (not <unknown>)
-- ✅ Deployment scales up under load
-- ✅ Deployment scales down after stabilization window
-- ✅ No error messages in WVA controller logs
-
-
-### Upgrading WVA
-
-**To upgrade WVA to a new version:**
-
-```bash
-cd ${WVA_REPO_PATH}
-
-# 1. Pull latest changes
-git pull origin main
-
-# 2. Apply updated CRDs first
-kubectl apply -f config/crd/bases/
-
-# 3. Redeploy WVA with new image
-make deploy-wva-on-k8s \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:v0.6.0 \
-  NAMESPACE=<target-namespace> \
-  NAMESPACE_SCOPED=true \
-  DEPLOY_LLM_D=false
-```
-
-**Breaking change v0.5.1**: `scaleTargetRef` now required. Update existing VAs:
-```yaml
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment  # or StatefulSet, LeaderWorkerSet
-    name: <deployment-name>
-```
-
-### Repository Resources
-
-**WVA Repository** (`${WVA_REPO_PATH}`):
-- **Deployment**: `deploy/install.sh`, `deploy/install-multi-model.sh`, `deploy/lib/*.sh`
-- **Configuration**: `deploy/configmap-*.yaml` (saturation, queueing, serviceclass)
-- **Documentation**: `docs/user-guide/` (configuration.md, troubleshooting.md, crd-reference.md, hpa-integration.md, keda-integration.md)
-- **Makefile**: Run `make help` for 40+ deployment/testing targets
-- **Samples**: `config/samples/`
-
-**llm-d Repository** (`${LLMD_REPO_PATH}`):
-- **WVA Integration**: `guides/workload-autoscaling/README.wva.md`
-- **Configuration Examples**: `guides/workload-autoscaling/`
-
-**Common Makefile Targets** (run in `${WVA_REPO_PATH}`):
-```bash
-# Always use NAMESPACE_SCOPED=true for safety
-make deploy-wva-on-k8s NAMESPACE_SCOPED=true                    # Kubernetes deployment
-make deploy-wva-on-openshift NAMESPACE_SCOPED=true              # OpenShift deployment
-make deploy-e2e-infra ENVIRONMENT=kubernetes NAMESPACE_SCOPED=true  # Full stack
-make deploy-multi-model-infra MODELS="m1,m2" NAMESPACE_SCOPED=true  # Multi-model
-make test-e2e-smoke                                             # Quick tests
-```
-
-**Benchmark Templates**: `deployments/*/benchmark-templates/` - See run-llm-d-benchmark skill
-
-## Verification, Troubleshooting & Critical Requirements
-
-### Critical Configuration Requirements
-
-**Two requirements for WVA to work**:
-1. **VariantAutoscaling MUST have accelerator label**: `inference.optimization/acceleratorName: nvidia`
-2. **HPA selector MUST match both labels**: `variant_name` and `exported_namespace`
-
-**Using existing WVA controller**: If a controller exists, **ASK USER** based on isolation requirements (Section 1):
-- Reuse existing (VariantAutoscaling auto-discovered) OR
-- Deploy new namespace-scoped controller (complete isolation)
-
-### Verification Scripts
-
-**After deployment** (automatic via `${WVA_REPO_PATH}/deploy/install.sh`):
-- Checks: WVA controller, Prometheus, llm-d infra, VariantAutoscaling, scaler backend
-
-**Runtime verification** (skill scripts):
 ```bash
 ./scripts/verify-wva.sh <namespace>                    # Status, HPA, logs, metrics
 ./scripts/troubleshoot-metrics.sh <namespace> <pod>    # Metrics diagnostics
 ./scripts/troubleshoot-scaling.sh <namespace>          # Scaling diagnostics
 ```
 
-**Manual verification** (WVA repository):
-```bash
-source ${WVA_REPO_PATH}/deploy/lib/verify.sh
-export WVA_NS="workload-variant-autoscaler-system"
-verify_deployment
-```
+#### Success Criteria
 
-### Common Issues
+A successful WVA deployment should show:
+- ✅ WVA controller logs show "VariantAutoscaling" detected (not "No active VariantAutoscalings found")
+- ✅ METRICSREADY: True within 2 minutes
+- ✅ HPA shows valid metrics (not `<unknown>`)
+- ✅ Deployment scales up under load
+- ✅ Deployment scales down after stabilization window
+- ✅ No error messages in WVA controller logs
 
-**Most common**: Missing accelerator label, wrong HPA selector, metrics not scraped yet
+See [`Troubleshooting.md`](./Troubleshooting.md) for detailed solutions to common issues.
 
-See [`Troubleshooting.md`](./Troubleshooting.md) and [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md) for detailed solutions.
-
-## Best Practices
-
-1. **Start with defaults**: Use default thresholds initially, tune based on observed behavior
-2. **Align thresholds**: Keep WVA and EPP thresholds synchronized
-3. **Monitor first**: Observe saturation patterns before aggressive tuning
-4. **Stabilization windows**: Use longer windows (120s+ scale-up, 300s+ scale-down) to prevent flapping
-5. **Test with load**: Use llm-d-benchmark to validate scaling behavior under realistic load
-6. **Cost optimization**: For multi-variant setups, set variantCost accurately to reflect actual costs
-7. **Scale-to-zero**: Only enable in dev/test environments, not production (cold start latency)
-
-## Automated Deployment Script
-
-**IMPORTANT**: Generate a customized deployment script based on user requirements using the template system.
-
-### Generating a Deployment Script
-
-The agent should use [`generate-deploy-script.sh`](scripts/generate-deploy-script.sh) to create a customized deployment script from the [`deploy-wva.sh.template`](scripts/deploy-wva.sh.template):
-
-**Agent Workflow:**
-1. Gather user requirements (namespace, deployment name, model ID, thresholds, etc.)
-2. Run the generator script with collected values
-3. Review the generated script with the user
-4. Execute the generated script to deploy WVA
-
-**Generator Usage:**
-```bash
-cd skills/configure-wva-autoscaling-llm-d/scripts
-
-# Interactive mode (prompts for all values)
-./generate-deploy-script.sh
-
-# Command-line mode (all values provided)
-./generate-deploy-script.sh \
-  --namespace example-namespace \
-  --deployment my-llm-deployment \
-  --wva-repo /path/to/wva-repo \
-  --model-id "Qwen/Qwen3-32B" \
-  --variant-cost "100" \
-  --min-replicas 2 \
-  --max-replicas 10 \
-  --kv-threshold 0.80 \
-  --queue-threshold 5 \
-  --scale-up-window 120 \
-  --scale-down-window 300 \
-  --output deploy-wva-qwen32.sh
-```
-
-**What the generated script does:**
-1. **Phase 1**: Deploys WVA controller into target namespace with `namespaceScoped: true`
-2. **Phase 2**: Adds required labels and creates metrics infrastructure
-3. **Phase 3**: Creates VariantAutoscaling and HPA resources with user-specified configuration
-4. **Verification**: Checks deployment status and waits for metrics to be ready
-
-**Template Variables:**
-- `{{NAMESPACE}}` - Target namespace
-- `{{DEPLOYMENT_NAME}}` - Deployment name
-- `{{WVA_REPO_PATH}}` - Path to WVA repository
-- `{{MODEL_ID}}` - Model identifier
-- `{{VARIANT_COST}}` - Variant cost (default: "100")
-- `{{PROMETHEUS_URL}}` - Prometheus URL (optional)
-- `{{MIN_REPLICAS}}` / `{{MAX_REPLICAS}}` - Replica limits (default: 2/10)
-- `{{KV_CACHE_THRESHOLD}}` - KV cache threshold (default: 0.80)
-- `{{QUEUE_LENGTH_THRESHOLD}}` - Queue threshold (default: 5)
-- `{{SCALE_UP_STABILIZATION}}` - Scale-up window in seconds (default: 120)
-- `{{SCALE_DOWN_STABILIZATION}}` - Scale-down window in seconds (default: 300)
-
-**Benefits of Template Approach:**
-- ✅ Agent can customize all parameters based on user requirements
-- ✅ No need for separate YAML files - everything embedded in script
-- ✅ User gets a single executable script for their specific deployment
-- ✅ Script can be version controlled with the deployment
-- ✅ Easy to regenerate with different parameters
-
-## Phase 4: Optional Load Testing
+### 5. Optional Load Testing
 
 **IMPORTANT**: After successful deployment and verification, **ASK THE USER** if they want to test WVA autoscaling with load.
 
-### When to Test
+#### When to Test
 - User wants to validate WVA is working correctly
 - User wants to see scaling in action
 - User wants to tune thresholds based on observed behavior
 
-### Using test-wva-scaling.sh
+#### Using test-wva-scaling.sh
 
 The [`test-wva-scaling.sh`](scripts/test-wva-scaling.sh) script automates load testing and monitoring:
 
@@ -751,69 +407,237 @@ cd skills/configure-wva-autoscaling-llm-d/scripts
 
 **Note**: The script automatically detects the EPP service name and model ID if not provided.
 
-### Expected Behavior
+#### Expected Behavior
 
 **During load:**
 - KV cache usage should increase (visible in vLLM metrics)
 - Queue depth may increase if load exceeds capacity
 - WVA should detect saturation and recommend scale-up
-- HPA should scale deployment up (after stabilization window ~120s)
+- HPA should scale deployment up after the scale-up stabilization window you configured
 
 **After load stops:**
 - KV cache usage returns to low levels
 - Queue depth returns to 0
 - WVA should recommend scale-down
-- HPA should scale deployment down (after stabilization window ~300s)
+- HPA should scale deployment down after the scale-down stabilization window you configured
 
-### Troubleshooting Test Results
-
-The test script provides automatic analysis and troubleshooting suggestions. Common issues:
+#### Troubleshooting Test Results
 
 **If no scale-up occurs:**
-- Load was insufficient to trigger saturation
-  - Solution: Increase `num-requests` parameter or use longer `max_tokens`
-- Deployment already at maxReplicas
-  - Solution: Check and increase maxReplicas in VariantAutoscaling
-- Stabilization window not elapsed
-  - Solution: Wait longer (default scale-up window is 120s)
-- WVA not monitoring correctly
-  - Solution: Run `./troubleshoot-scaling.sh <namespace>`
+- Load was insufficient to trigger saturation → increase `num-requests` or use longer `max_tokens`
+- Deployment already at maxReplicas → check and increase maxReplicas in VariantAutoscaling
+- Stabilization window not elapsed → wait for your configured `HPA_STABILIZATION_SECONDS`
+- WVA not monitoring correctly → run `./troubleshoot-scaling.sh <namespace>`
 
 **If scale-up is too slow:**
-- Reduce `scaleUpStabilization` window in HPA (default 120s)
-- Lower saturation thresholds in ConfigMap (e.g., `kvCacheThreshold: 0.70`)
+- Lower `HPA_STABILIZATION_SECONDS` (redeploy with a smaller value)
+- Lower saturation thresholds (e.g., `KV_CACHE_THRESHOLD=0.70`)
 
 **If scale-down doesn't occur:**
-- Wait longer: Scale-down stabilization is typically 300s
+- Wait longer: scale-down stabilization is typically 300s
 - Check if new requests are still coming in
 - Verify `scaleDownSafe: true` in WVA logs
 
 For detailed troubleshooting, see [`Troubleshooting.md`](./Troubleshooting.md).
 
-## Output Format
+## Reference
 
-When helping users configure WVA:
+### Configuration Files
 
-1. **Ask clarifying questions** about their requirements (especially scaling backend preference)
-2. **Provide specific YAML configurations** based on their needs
-3. **Explain the reasoning** behind configuration choices (e.g., why HPA is recommended)
-4. **Deploy WVA correctly** - INTO the target namespace with `namespaceScoped: true`
-5. **Create a deployment script** to automate the setup
-6. **Include monitoring commands** to verify the setup
-7. **After successful deployment, ASK if user wants to test** - don't assume
-8. **If user agrees to test, execute Phase 4** - send load and monitor scaling
-9. **Link to relevant documentation** for deeper understanding
+**`scripts/configs/`** — Use these YAML files to **save and version-control** the configuration you've chosen. They are not used for deployment (the Makefile generates all resources via Helm), but saving your settings here lets you track what was configured, re-apply it later, or share it with your team.
 
-**Do not**:
-- Skip asking about scaling backend preference
-- Deploy WVA to wrong namespace (must be IN target namespace, not workload-variant-autoscaler-system)
-- Assume HPA without explaining why it's recommended
-- Create generic configurations without understanding requirements
-- Skip threshold alignment with EPP
-- Forget to explain the "why" behind configurations
-- Create comprehensive README files (user doesn't want them)
-- Stop at just creating scripts/configs - **actually deploy to the user's llm-d deployment**
-- Skip asking about testing - always offer Phase 4 as optional after successful deployment
+### Makefile Variables
+
+Run `make help` in `${WVA_REPO_PATH}` to view all 40+ available targets.
+
+*Infrastructure (set once, rarely change):*
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `IMG` | WVA container image | `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` | Custom image tag |
+| `WVA_NS` | Target namespace for WVA deployment | `workload-variant-autoscaler-system` | `my-namespace` |
+| `NAMESPACE_SCOPED` | **CRITICAL**: Limit WVA to single namespace | `false` | **`true` (REQUIRED)** |
+| `DEPLOY_LLM_D` | Deploy llm-d stack with WVA | `true` | `false` (set when llm-d already exists) |
+| `DEPLOY_VA` | Deploy VariantAutoscaling resource via chart | `false` | **`true` (REQUIRED for single-step deploy)** |
+| `DEPLOY_HPA` | Deploy HPA resource via chart | `false` | **`true` (REQUIRED for single-step deploy)** |
+| `ENVIRONMENT` | Platform type | `kubernetes` | `openshift`, `kind-emulator` |
+
+*User configuration (tuned per model and scaling policy):*
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `MODEL_ID` | Model identifier for VA resource | `unsloth/Meta-Llama-3.1-8B` | `Qwen/Qwen3-32B` |
+| `ACCELERATOR_TYPE` | GPU accelerator type | `H100` | `A100`, `L40S` |
+| `KV_CACHE_THRESHOLD` | KV cache saturation threshold (0.0–1.0) | `0.80` | `0.70` (aggressive) |
+| `QUEUE_LENGTH_THRESHOLD` | Queue depth saturation threshold | `5` | `3` (aggressive) |
+| `KV_SPARE_TRIGGER` | Proactive scale-up spare KV trigger | `0.10` | `0.15` |
+| `QUEUE_SPARE_TRIGGER` | Proactive scale-up spare queue trigger | `3` | `2` |
+| `HPA_MIN_REPLICAS` | Minimum replicas | `1` | `0` (scale-to-zero) |
+| `HPA_STABILIZATION_SECONDS` | Scale-up and scale-down stabilization window | `240` | `60` (fast), `300` (conservative) |
+| `SCALER_BACKEND` | Scaler backend type | `prometheus-adapter` | `keda`, `none` |
+
+*Multi-model only:*
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `MODELS` | Comma-separated model list | `unsloth/Meta-Llama-3.1-8B` | `model1,model2` |
+
+Other targets for specific scenarios:
+```bash
+# Kind (local testing with emulated GPUs)
+make deploy-wva-emulated-on-kind NAMESPACE_SCOPED=true
+
+# Full e2e infrastructure (WVA + llm-d + monitoring, no VA/HPA — for e2e test suites)
+make deploy-e2e-infra ENVIRONMENT=kubernetes NAMESPACE_SCOPED=true
+
+# Multi-model deployment (one WVA per model)
+make deploy-multi-model-infra \
+  ENVIRONMENT=kubernetes \
+  MODELS="Qwen/Qwen3-0.6B,unsloth/Meta-Llama-3.1-8B" \
+  WVA_NS=my-target-namespace \
+  NAMESPACE_SCOPED=true
+```
+
+### Parameter → Resource Mapping
+
+Each Makefile variable lands in a specific Kubernetes resource. Understanding this helps with troubleshooting and post-deploy tuning.
+
+**ConfigMap `wva-saturation-scaling-config`** — tells WVA *when* to recommend a replica change:
+
+| Makefile var | ConfigMap field | Meaning |
+|---|---|---|
+| `KV_CACHE_THRESHOLD` | `kvCacheThreshold` | Mark replica as saturated when KV cache ≥ this |
+| `QUEUE_LENGTH_THRESHOLD` | `queueLengthThreshold` | Mark replica as saturated when queue depth ≥ this |
+| `KV_SPARE_TRIGGER` | `kvSpareTrigger` | Proactively scale up when spare KV capacity < this |
+| `QUEUE_SPARE_TRIGGER` | `queueSpareTrigger` | Proactively scale up when spare queue < this |
+
+**HPA / ScaledObject** — actually *executes* the scaling:
+
+| Source | HPA field | Meaning |
+|---|---|---|
+| `HPA_MIN_REPLICAS` | `spec.minReplicas` | Floor |
+| `--set hpa.maxReplicas` (helm) | `spec.maxReplicas` | Ceiling |
+| `HPA_STABILIZATION_SECONDS` | `behavior.scaleUp/Down.stabilizationWindowSeconds` | Both windows — symmetric by default |
+
+> **Asymmetric stabilization**: `HPA_STABILIZATION_SECONDS` sets both scale-up and scale-down to the same value. For different windows (e.g., fast scale-up / slow scale-down), do a `helm upgrade` after the initial deploy to override them independently — see [example3](scripts/configs/example3-aggressive-scaling.yaml) for the HPA YAML structure.
+
+**VariantAutoscaling** — drives multi-variant *priority ordering*:
+
+| Source | VA field | Meaning |
+|---|---|---|
+| `ACCELERATOR_TYPE` | `inference.optimization/acceleratorName` label | GPU vendor (nvidia / amd / cpu) |
+| `MODEL_ID` | `spec.modelID` | Model this VA governs |
+| `--set va.variantCost` (helm) | `spec.variantCost` | Relative cost — WVA scales cheapest variant first |
+
+### Configuration Rules
+
+**Always applies (Makefile or manual):**
+- **CRITICAL**: HPA cannot scale from 0 replicas
+  - If deployment is at 0 replicas, manually scale to 1 first: `kubectl scale deployment <name> --replicas=1`
+  - HPA will then manage scaling from 1 to maxReplicas
+  - For true scale-to-zero, use KEDA (`SCALER_BACKEND=keda`)
+- **CRITICAL**: `variantCost` must be a STRING when overriding via helm (e.g., `--set va.variantCost="100"` not `100`)
+- Multi-variant: WVA scales cheaper variants first based on `variantCost`
+- Align thresholds with Inference Scheduler (EPP) — see [EPP Threshold Alignment](#epp-threshold-alignment)
+
+**Manual YAML only** (Makefile + `DEPLOY_VA=true DEPLOY_HPA=true` handles these automatically):
+- Include `inference.optimization/acceleratorName` label on VariantAutoscaling (e.g., `nvidia`, `amd`, `cpu`) — without it, METRICSREADY stays False
+- HPA selector must match BOTH labels: `variant_name` (= VA resource name) + `exported_namespace` (= deployment namespace)
+- API version must be `llmd.ai/v1alpha1` (NOT `inference.llmd.ai/v1alpha1`)
+- `scaleTargetRef` must include `apiVersion: apps/v1` — without it WVA fails with "no matches for kind Deployment in version \"\""
+- VariantAutoscaling spec must NOT include `metrics` — only: `scaleTargetRef`, `modelID`, `variantCost`, `minReplicas`, `maxReplicas`
+
+**Troubleshooting: if METRICSREADY stays False**, verify the acceleratorName label exists:
+```bash
+kubectl get variantautoscaling <name> -n <namespace> -o jsonpath='{.metadata.labels}'
+```
+
+### EPP Threshold Alignment
+
+**Critical**: WVA and EPP must use identical thresholds. One EPP instance per model (shared across variants of same model).
+
+**Threshold mapping:**
+- WVA `kvCacheThreshold` = EPP `kvCacheUtilThreshold`
+- WVA `queueLengthThreshold` = EPP `queueDepthThreshold`
+
+**To align:**
+1. Update WVA ConfigMap `wva-saturation-scaling-config` (auto-reloads)
+2. Update EPP config
+3. Restart EPP: `kubectl rollout restart deployment/gaie-<model-name>-epp -n <namespace>`
+
+### Undeploy
+
+```bash
+cd ${WVA_REPO_PATH}
+
+# Undeploy from Kubernetes
+make undeploy-wva-on-k8s \
+  WVA_NS=my-target-namespace
+
+# Undeploy from OpenShift
+make undeploy-wva-on-openshift \
+  WVA_NS=my-target-namespace
+
+# Undeploy from Kind
+make undeploy-wva-emulated-on-kind
+
+# Undeploy multi-model infrastructure
+make undeploy-multi-model-infra \
+  MODELS="model1,model2"
+```
+
+### Upgrade
+
+```bash
+cd ${WVA_REPO_PATH}
+
+# 1. Pull latest changes
+git pull origin main
+
+# 2. Apply updated CRDs first
+kubectl apply -f config/crd/bases/
+
+# 3. Redeploy WVA with new image
+make deploy-wva-on-k8s \
+  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:v0.6.0 \
+  WVA_NS=<target-namespace> \
+  NAMESPACE_SCOPED=true \
+  DEPLOY_LLM_D=false
+```
+
+**Breaking change v0.5.1**: `scaleTargetRef` now required. Update existing VAs:
+```yaml
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment  # or StatefulSet, LeaderWorkerSet
+    name: <deployment-name>
+```
+
+### Repository Resources
+
+**WVA Repository** (`${WVA_REPO_PATH}`):
+- **Deployment**: `deploy/install.sh`, `deploy/install-multi-model.sh`, `deploy/lib/*.sh`
+- **Configuration**: `deploy/configmap-*.yaml` (saturation, queueing, serviceclass)
+- **Documentation**: `docs/user-guide/` (configuration.md, troubleshooting.md, crd-reference.md, hpa-integration.md, keda-integration.md)
+- **Makefile**: Run `make help` for 40+ deployment/testing targets
+- **Samples**: `config/samples/`
+
+**llm-d Repository** (`${LLMD_REPO_PATH}`):
+- **WVA Integration**: `guides/workload-autoscaling/README.wva.md`
+- **Configuration Examples**: `guides/workload-autoscaling/`
+
+**Benchmark Templates**: `deployments/*/benchmark-templates/` - See run-llm-d-benchmark skill
+
+## Best Practices
+
+1. **Start with defaults**: Use default thresholds initially, tune based on observed behavior
+2. **Align thresholds**: Keep WVA and EPP thresholds synchronized
+3. **Monitor first**: Observe saturation patterns before aggressive tuning
+4. **Stabilization windows**: Use longer windows (120s+ scale-up, 300s+ scale-down) to prevent flapping
+5. **Test with load**: Use llm-d-benchmark to validate scaling behavior under realistic load
+6. **Cost optimization**: For multi-variant setups, set variantCost accurately to reflect actual costs
+7. **Scale-to-zero**: Only enable in dev/test environments, not production (cold start latency)
 
 ## Online Resources
 
