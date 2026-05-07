@@ -4,13 +4,12 @@ metadata:
   name: <model-name>-autoscaler
   namespace: <namespace>
   labels:
-    # REQUIRED: Accelerator label for WVA to process this resource
+    # REQUIRED: Without this label WVA will not process the resource (METRICSREADY stays False)
     inference.optimization/acceleratorName: nvidia
 spec:
   scaleTargetRef:
+    apiVersion: apps/v1   # REQUIRED: without apiVersion WVA fails to find the Deployment
     kind: Deployment
     name: <deployment-name>
   modelID: "<vendor>/<model-name>"
   variantCost: "10.0"  # Cost per replica (for multi-variant optimization)
-
-# Made with Bob

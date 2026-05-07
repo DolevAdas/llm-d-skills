@@ -187,7 +187,7 @@ Do you want to proceed with this configuration? (yes/no)
    Always show the value being set — never hide it from the user.
 
    Then collect:
-   - **Stabilization window**: `HPA_STABILIZATION_SECONDS` (default 240s; shorter = faster reaction, longer = more stable) — sets both scale-up and scale-down windows **symmetrically**; for asymmetric behavior (e.g., fast scale-up / slow scale-down), use `helm upgrade` after deploy to set them independently (see [example3](scripts/configs/example3-aggressive-scaling.yaml) for the HPA YAML structure)
+   - **Stabilization window**: `HPA_STABILIZATION_SECONDS` (default 240s; shorter = faster reaction, longer = more stable) — sets both scale-up and scale-down windows **symmetrically**; for asymmetric behavior (e.g., fast scale-up / slow scale-down), use `helm upgrade` after deploy to set them independently (see [example3](scripts/configs/example.yaml) for the HPA YAML structure)
    - **Replica limits**: `HPA_MIN_REPLICAS` (default 1), `HPA_MAX_REPLICAS` (default 2 — override via `--set hpa.maxReplicas=N` post-deploy)
    - **Saturation Thresholds**:
      - `KV_CACHE_THRESHOLD` (default 0.80): Replica saturated when KV cache ≥ threshold
@@ -519,7 +519,7 @@ Each Makefile variable lands in a specific Kubernetes resource. Understanding th
 | `--set hpa.maxReplicas` (helm) | `spec.maxReplicas` | Ceiling |
 | `HPA_STABILIZATION_SECONDS` | `behavior.scaleUp/Down.stabilizationWindowSeconds` | Both windows — symmetric by default |
 
-> **Asymmetric stabilization**: `HPA_STABILIZATION_SECONDS` sets both scale-up and scale-down to the same value. For different windows (e.g., fast scale-up / slow scale-down), do a `helm upgrade` after the initial deploy to override them independently — see [example3](scripts/configs/example3-aggressive-scaling.yaml) for the HPA YAML structure.
+> **Asymmetric stabilization**: `HPA_STABILIZATION_SECONDS` sets both scale-up and scale-down to the same value. For different windows (e.g., fast scale-up / slow scale-down), do a `helm upgrade` after the initial deploy to override them independently — see [example3](scripts/configs/example.yaml) for the HPA YAML structure.
 
 **VariantAutoscaling** — drives multi-variant *priority ordering*:
 

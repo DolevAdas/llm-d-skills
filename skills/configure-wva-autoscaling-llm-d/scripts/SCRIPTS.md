@@ -235,7 +235,7 @@ The `configs/` directory contains example configurations:
 - **`hpa-basic.yaml`** - Basic HPA configuration
 
 ### Complete Examples
-- **`example3-aggressive-scaling.yaml`** - Low-latency aggressive scaling (available)
+- **`example.yaml`** - Low-latency aggressive scaling (available)
 - Other examples referenced in SKILL.md (create as needed)
 
 ## Critical Configuration Requirements
