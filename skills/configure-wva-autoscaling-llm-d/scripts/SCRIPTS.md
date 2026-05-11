@@ -114,6 +114,29 @@ The scripts in this directory provide:
 - `model-id`: (Optional) Auto-detects if not provided
 - `num-requests`: (Optional) Default: 100
 
+**When the gateway or InferencePool is unavailable** (e.g., `llm-d-infpool` missing), the script's EPP-based routing will fail. Use direct pod IP instead:
+
+```bash
+# Get pod IP
+kubectl get pod -n <namespace> -l llm-d.ai/role=decode -o wide
+
+# Launch load from inside the cluster — streaming + high max_tokens fills KV cache
+kubectl run wva-load-test -n <namespace> --rm -i --restart=Never \
+  --image=curlimages/curl:latest \
+  --command -- sh -c '
+POD_IP="<pod-ip>"
+MODEL="<model-id>"
+for i in $(seq 1 200); do
+  curl -s -N -X POST "http://$POD_IP:8000/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Write a detailed essay. Part $i.\"}],\"max_tokens\":4000,\"stream\":true}" \
+    > /dev/null 2>&1 &
+done
+wait'
+```
+
+**Why streaming + high max_tokens**: Large models (e.g., Qwen3-32B on 2×H100) have huge KV caches. Short requests complete before the next Prometheus scrape (30s interval). Streaming keeps KV slots occupied during the full generation window, allowing Prometheus to observe the saturation.
+
 ### Verification Scripts
 
 #### [`verify-wva.sh`](./verify-wva.sh)
@@ -235,7 +258,6 @@ The `configs/` directory contains example configurations:
 - **`hpa-basic.yaml`** - Basic HPA configuration
 
 ### Complete Examples
-- **`example.yaml`** - Low-latency aggressive scaling (available)
 - Other examples referenced in SKILL.md (create as needed)
 
 ## Critical Configuration Requirements
@@ -264,7 +286,9 @@ spec:
 - Without this label, the VariantAutoscaling will show `METRICSREADY: False`
 - Controller logs will show: "Skipping status update for VA without accelerator info"
 
-### 2. HPA Must Match Both Labels
+### 2. HPA Must Use Correct Metric Name and Both Labels
+
+Prometheus Adapter only exposes **`wva_desired_replicas`**. Do NOT use `wva_kv_cache_saturation` or `wva_queue_depth_saturation` — these are not served by the adapter and will cause `<unknown>` in `kubectl get hpa`.
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -277,21 +301,21 @@ spec:
   - type: External
     external:
       metric:
-        name: wva_desired_replicas
+        name: wva_desired_replicas   # ONLY valid metric name for WVA via Prometheus Adapter
         selector:
           matchLabels:
-            # REQUIRED: Must match VariantAutoscaling name
+            # REQUIRED: Must match VariantAutoscaling resource name
             variant_name: my-autoscaler
             # REQUIRED: Must match namespace
             exported_namespace: my-namespace
       target:
-        type: AverageValue
-        averageValue: "1"
+        type: AverageValue   # Use AverageValue, not Value
+        averageValue: "1"    # HPA scales to desiredReplicas × (metric / 1) = metric value
 ```
 
 **Why both labels are required:**
 - WVA exports metrics with both `variant_name` and `exported_namespace` labels
-- HPA needs both labels to uniquely identify the correct metric
+- HPA needs both labels to uniquely identify the correct metric series
 - Without both labels, HPA will show `<unknown>` for metrics
 
 ## Common Issues and Solutions

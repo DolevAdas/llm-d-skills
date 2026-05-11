@@ -223,6 +223,9 @@ echo "✓ VariantAutoscaling created"
 echo ""
 
 # Create HPA
+# Note: use only wva_desired_replicas — Prometheus Adapter does not expose
+# wva_kv_cache_saturation or wva_queue_depth_saturation as external metrics.
+# type: AverageValue with averageValue "1" matches the WVA recommendation 1:1.
 echo "Creating HPA resource..."
 kubectl apply -f - <<EOF
 apiVersion: autoscaling/v2
@@ -241,25 +244,14 @@ spec:
   - type: External
     external:
       metric:
-        name: wva_kv_cache_saturation
+        name: wva_desired_replicas
         selector:
           matchLabels:
             variant_name: ${DEPLOYMENT}-va
             exported_namespace: ${NAMESPACE}
       target:
-        type: Value
-        value: "1"
-  - type: External
-    external:
-      metric:
-        name: wva_queue_depth_saturation
-        selector:
-          matchLabels:
-            variant_name: ${DEPLOYMENT}-va
-            exported_namespace: ${NAMESPACE}
-      target:
-        type: Value
-        value: "1"
+        type: AverageValue
+        averageValue: "1"
   behavior:
     scaleUp:
       stabilizationWindowSeconds: ${SCALE_UP_STABILIZATION}
