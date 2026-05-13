@@ -249,6 +249,8 @@ For each run, extract these metrics where available:
 | `ttft_p90_ms` | Time to first token, 90th percentile |
 | `itl_mean_ms` | Inter-token latency, mean |
 | `error_rate_pct` | Percentage of failed requests |
+| `prefix_cache_hits` | Number of cache hits |
+| `prefix_cache_queries` | Number of queries |
 
 If extraction requires parsing, write and run a short Python script rather than reading manually — it's faster and reproducible. Save extracted metrics back into each `run_state.json` under a `"metrics"` key.
 
@@ -299,6 +301,54 @@ Use this structure:
 > For throughput, positive delta means Run B is better.
 > For latency/TTFT/ITL/error rate, negative delta means Run B is better.
 
+## KV-Cache Performance Analysis
+Note: If metrics in "actual cache totals" could not be pulled, skip to "time-averaged cache hit rates". If none could be collected, skip the KV-Cache Performance Analysis section.
+
+### Actual Cache Totals (Authoritative)
+Extract from `results/metrics/processed/metrics_summary.json` using cumulative counter totals:
+
+| Metric | Run A: <label> | Run B: <label> | Delta (B − A) | Change (%) |
+|--------|------------------|---------------|-------------|-------------|
+| **Total Prefix Cache Hits** | | | | |
+| **Total Prefix Cache Queries** | | | | |
+| **Total Cache Misses** | | | | |
+| **Actual Cache Hit Rate** | | | | |
+| **Cache Misses per Request** | | | | |
+
+> **Extraction Method:**
+> ```bash
+> jq '[to_entries[] | {
+>   pod: .key,
+>   prefix_hits: (."value".metrics."vllm:prefix_cache_hits_total".max // 0),
+>   prefix_queries: (."value".metrics."vllm:prefix_cache_queries_total".max // 0)
+> }] | {
+>   total_hits: (map(.prefix_hits) | add),
+>   total_queries: (map(.prefix_queries) | add),
+>   hit_rate: ((map(.prefix_hits) | add) / (map(.prefix_queries) | add) * 100)
+> }' results/metrics/processed/metrics_summary.json
+> ```
+>
+> - **Total Prefix Cache Hits**: Sum of `vllm:prefix_cache_hits_total.max` across all pods
+> - **Total Prefix Cache Queries**: Sum of `vllm:prefix_cache_queries_total.max` across all pods
+> - **Total Cache Misses**: Total Queries - Total Hits
+> - **Actual Cache Hit Rate**: (Total Hits / Total Queries) × 100
+> - **Cache Misses per Request**: Total Misses / Total Requests
+
+### Time-Averaged Cache Hit Rates (Reference Only)
+For comparison, also extract time-averaged metrics ("vllm:prefix_cache_hit_rate") from the same file:
+
+| Metric | Run A: <label> | Run B: <label> | Delta (B − A) |
+|--------|------------------|---------------|-------------|
+| Time-Avg Hit Rate (Mean) | | | |
+| Time-Avg Hit Rate (P90) | | | |
+| Time-Avg Hit Rate (P95) | | | |
+
+> **Note:** Time-averaged metrics sample the hit rate periodically and may understate the actual improvement due to cold cache periods early in the benchmark.
+
+### Cache Efficiency Impact
+Calculate and report:
+- **Tokens Not Reprocessed**: `Total_cache_misses_saved × avg_prompt_length`
+- **Per-Request Efficiency**: Compare cache misses per request between runs
 ---
 
 ## Summary
