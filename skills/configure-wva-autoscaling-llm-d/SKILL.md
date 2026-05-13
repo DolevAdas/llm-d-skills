@@ -72,10 +72,18 @@ After the namespace(s) and deployments are confirmed, collect the following. For
 
 **Scaling backend (ask once per namespace):**
 
+Before asking the user, check what's available on the cluster:
+```bash
+kubectl get deployment keda-operator -A 2>/dev/null && echo "KEDA installed" || echo "KEDA not found"
+kubectl get apiservice v1beta1.external.metrics.k8s.io 2>/dev/null | grep -o 'True\|False'
+```
+
 | Backend | `SCALER_BACKEND` value | When to use |
 |---------|----------------------|-------------|
 | HPA (Prometheus Adapter) | `prometheus-adapter` | Standard; works out-of-box with kube-prometheus-stack or OpenShift monitoring |
 | KEDA | `keda` | KEDA already installed, or scale-to-zero is needed |
+
+> **OpenShift without KEDA**: If `keda-operator` is not found, you must use `prometheus-adapter`. Scale-to-zero (`HPA_MIN_REPLICAS=0`) requires KEDA — if the user needs it, the KEDA operator must be installed first. With `prometheus-adapter`, set `HPA_MIN_REPLICAS=1`.
 
 **Per-namespace settings** (shared across all models in the namespace):
 
@@ -200,13 +208,17 @@ make deploy-wva-on-openshift \
   HPA_MIN_REPLICAS=<min_replicas> \
   HPA_STABILIZATION_SECONDS=<stabilization_seconds> \
   SCALER_BACKEND=prometheus-adapter \
-  MONITORING_NAMESPACE=openshift-monitoring \
+  MONITORING_NAMESPACE=<openshift-monitoring|openshift-user-workload-monitoring> \
   SKIP_TLS_VERIFY=true
 ```
 
 > **`LLM_D_MODELSERVICE_NAME` on OpenShift**: The Makefile template appends `-decode` to this value to form the full deployment name. Set it **without** the `-decode` suffix. Example: deployment `my-model-decode` → `LLM_D_MODELSERVICE_NAME=my-model`.
 
+> **OpenShift `MONITORING_NAMESPACE`**: Use whichever namespace hosts your prometheus-adapter. Check with: `kubectl get apiservice v1beta1.external.metrics.k8s.io -o jsonpath='{.spec.service.namespace}'`. On clusters with user workload monitoring enabled this is typically `openshift-user-workload-monitoring`, not `openshift-monitoring`.
+
 > **OpenShift gateway prompt bypass**: `E2E_TESTS_ENABLED=true INSTALL_GATEWAY_CTRLPLANE=false` prevents the deploy script from stopping at an interactive gateway installation prompt. Without these, the make command exits with code 2.
+
+> **OpenShift exit code 2 when llm-d is already deployed**: The Makefile chains `install.sh && install-llmd-infra.sh`. The second script requires `HF_TOKEN` even when `DEPLOY_LLM_D=false`, so the overall Make target exits with code 2. **The WVA deployment itself has already succeeded at this point** — verify with `kubectl get deployment workload-variant-autoscaler-controller-manager -n <namespace>` before assuming failure.
 
 **What the Makefile creates:**
 
@@ -498,7 +510,33 @@ kubectl patch variantautoscaling <name> -n <namespace> --type=merge \
 
 **Cause**: vLLM pod labels don't include the `pod_name` label that WVA uses to correlate dispatch metrics. Does not block scaling.
 
-### 6. Load Test Not Triggering Scale-Up on Large Models
+### 6. OpenShift: Helm Chart Sets `acceleratorName: H100` Despite `ACCELERATOR_TYPE=nvidia`
+
+**Symptom**: `METRICSREADY` stays blank or `False` after deploy on OpenShift. WVA logs: `"Skipping status update for VA without accelerator info"`.
+
+**Cause**: The Helm chart used by `deploy-wva-on-openshift` hardcodes the GPU model (`H100`) as the accelerator label rather than the vendor (`nvidia`), overriding the `ACCELERATOR_TYPE` variable. The VariantAutoscaling created for the first model will have `acceleratorName: H100` instead of `nvidia`.
+
+**Fix**: After Step 4a, always patch the first model's VA:
+```bash
+kubectl patch variantautoscaling workload-variant-autoscaler-va -n <namespace> --type=merge \
+  -p '{"metadata":{"labels":{"inference.optimization/acceleratorName":"nvidia"}}}'
+```
+
+Additional models created via `kubectl apply` in Step 4b are not affected — set the label correctly in the manifest.
+
+### 7. HPA Stuck at 0 When Target Deployment Has 0 Replicas at Deploy Time
+
+**Symptom**: Both HPAs show `REPLICAS: 0` even though `minReplicas: 1` is set. WVA logs: `"No active VariantAutoscalings found, skipping optimization"`. `METRICSREADY` stays blank.
+
+**Cause**: Chicken-and-egg — WVA only analyzes VAs whose target deployments have running pods. With 0 pods, WVA emits no `wva_desired_replicas` metric. With no metric, the HPA target shows `<unknown>`. With `<unknown>` metrics and a deployment already at 0 replicas, the HPA does not scale up to `minReplicas`.
+
+**Fix**: Manually scale each target deployment to 1 replica to bootstrap the loop:
+```bash
+kubectl scale deployment <deployment-name> -n <namespace> --replicas=1
+```
+Once WVA sees running pods it will start emitting metrics, the HPA target will resolve from `<unknown>`, and from that point the HPA enforces `minReplicas` normally.
+
+### 8. Load Test Not Triggering Scale-Up on Large Models
 
 **Symptom**: WVA logs show `avgSpareKv: 0.7, shouldScaleUp: false` even after sending requests.
 
