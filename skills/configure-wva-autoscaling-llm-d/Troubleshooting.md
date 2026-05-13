@@ -2,6 +2,112 @@
 
 Quick reference for common WVA issues. For detailed troubleshooting, see `${WVA_REPO_PATH}/docs/user-guide/troubleshooting.md`.
 
+---
+
+## Known Issues and Gotchas
+
+These are real issues encountered during deployment. Read before debugging.
+
+### 1. OpenShift: Interactive Gateway Prompt Causes Exit Code 2
+
+**Symptom**: `make deploy-wva-on-openshift` exits with code 2 after printing a gateway installation prompt.
+
+**Cause**: The deploy script calls `prompt_gateway_installation()` when `E2E_TESTS_ENABLED` is not `true`. This is an interactive prompt that blocks non-TTY execution.
+
+**Fix**: Prefix the make command with:
+
+```bash
+E2E_TESTS_ENABLED=true INSTALL_GATEWAY_CTRLPLANE=false make deploy-wva-on-openshift ...
+```
+
+### 2. CRD Field Manager Conflict
+
+**Symptom**: Helm fails with:
+
+```text
+failed to install CRD crds/llmd.ai_variantautoscalings.yaml: conflict occurred with
+"kubectl-client-side-apply"
+```
+
+**Cause**: The CRD was previously applied directly via `kubectl apply`, creating a client-side field manager. Helm uses server-side apply, which conflicts.
+
+**Fix**: Force server-side apply on the CRD before re-running the Makefile:
+
+```bash
+kubectl apply --server-side --force-conflicts \
+  -f ${WVA_REPO_PATH}/charts/workload-variant-autoscaler/crds/llmd.ai_variantautoscalings.yaml
+```
+
+### 3. HPA Shows `<unknown>` for Metrics
+
+**Symptom**: `kubectl get hpa` shows `<unknown>/1` for all metrics.
+
+**Causes and fixes:**
+
+| Cause | Fix |
+| ----- | --- |
+| Wrong metric name in HPA (e.g., `wva_kv_cache_saturation`) | Use only `wva_desired_replicas` — it's the only metric Prometheus Adapter exposes for WVA |
+| HPA selector missing `exported_namespace` label | Add `exported_namespace: <namespace>` to `matchLabels` |
+| HPA selector `variant_name` doesn't match VA resource name | Verify with `kubectl get variantautoscaling -n <namespace>` |
+| Prometheus Adapter not installed | Check `kubectl get apiservice v1beta1.external.metrics.k8s.io` |
+
+### 4. `METRICSREADY: False` on VariantAutoscaling
+
+**Symptom**: `kubectl get variantautoscaling` shows `METRICSREADY: False`. WVA logs: `"Skipping status update for VA without accelerator info"`.
+
+**Fix**: Add the accelerator label to the VariantAutoscaling:
+
+```bash
+kubectl patch variantautoscaling <name> -n <namespace> --type=merge \
+  -p '{"metadata":{"labels":{"inference.optimization/acceleratorName":"nvidia"}}}'
+```
+
+### 5. "No dispatch rate" Warning in WVA Logs
+
+**Symptom**: `"Pod has vLLM metrics but no dispatch rate — possible pod/pod_name label mismatch"`.
+
+**Impact**: Informational only. Saturation analysis still works using KV cache and queue depth. Scaling proceeds normally.
+
+**Cause**: vLLM pod labels don't include the `pod_name` label that WVA uses to correlate dispatch metrics. Does not block scaling.
+
+### 6. OpenShift: Helm Chart Sets `acceleratorName: H100` Despite `ACCELERATOR_TYPE=nvidia`
+
+**Symptom**: `METRICSREADY` stays blank or `False` after deploy on OpenShift. WVA logs: `"Skipping status update for VA without accelerator info"`.
+
+**Cause**: The Helm chart used by `deploy-wva-on-openshift` hardcodes the GPU model (`H100`) as the accelerator label rather than the vendor (`nvidia`), overriding the `ACCELERATOR_TYPE` variable. The VariantAutoscaling created for the first model will have `acceleratorName: H100` instead of `nvidia`.
+
+**Fix**: After Step 4a, always patch the first model's VA:
+
+```bash
+kubectl patch variantautoscaling workload-variant-autoscaler-va -n <namespace> --type=merge \
+  -p '{"metadata":{"labels":{"inference.optimization/acceleratorName":"nvidia"}}}'
+```
+
+Additional models created via `kubectl apply` in Step 4b are not affected — set the label correctly in the manifest.
+
+### 7. HPA Stuck at 0 When Target Deployment Has 0 Replicas at Deploy Time
+
+**Symptom**: Both HPAs show `REPLICAS: 0` even though `minReplicas: 1` is set. WVA logs: `"No active VariantAutoscalings found, skipping optimization"`. `METRICSREADY` stays blank.
+
+**Cause**: Chicken-and-egg — WVA only analyzes VAs whose target deployments have running pods. With 0 pods, WVA emits no `wva_desired_replicas` metric. With no metric, the HPA target shows `<unknown>`. With `<unknown>` metrics and a deployment already at 0 replicas, the HPA does not scale up to `minReplicas`.
+
+**Fix**: Manually scale each target deployment to 1 replica to bootstrap the loop:
+
+```bash
+kubectl scale deployment <deployment-name> -n <namespace> --replicas=1
+```
+
+Once WVA sees running pods it will start emitting metrics, the HPA target will resolve from `<unknown>`, and from that point the HPA enforces `minReplicas` normally.
+
+### 8. Load Test Not Triggering Scale-Up on Large Models
+
+**Symptom**: WVA logs show `avgSpareKv: 0.7, shouldScaleUp: false` even after sending requests.
+
+**Cause**: Large models (e.g., Qwen3-32B on 2×H100-80GB) have enormous KV caches. Short requests with small `max_tokens` complete and free KV slots before the next Prometheus scrape (every 30s).
+
+**Fix**: Use streaming requests with `max_tokens=4000` and send 150–200 concurrent requests. Streaming keeps KV slots occupied during the entire generation, allowing Prometheus to observe the saturation.
+
+---
 
 ## Quick Diagnostics
 
@@ -9,8 +115,8 @@ Quick reference for common WVA issues. For detailed troubleshooting, see `${WVA_
 # Check VariantAutoscaling status
 kubectl get variantautoscaling -n <namespace>
 
-# Check WVA controller logs
-kubectl logs -n workload-variant-autoscaler-system \
+# Check WVA controller logs (WVA is deployed into the target namespace)
+kubectl logs -n <namespace> \
   -l app.kubernetes.io/name=workload-variant-autoscaler -f
 
 # Check HPA status
@@ -29,12 +135,15 @@ kubectl get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/
 **Symptoms**: WVA controller logs show this message even though VariantAutoscaling resource exists.
 
 **Quick Diagnosis Checklist**:
-1. ✅ Check accelerator label on deployment (MOST COMMON)
-2. ✅ Verify API version is `llmd.ai/v1alpha1`
-3. ✅ Check variantCost is string (e.g., `"100"`)
-4. ✅ Verify namespace-scoping configuration
+
+1. ✅ Check target deployments have at least 1 running replica — if at 0, see **Known Issue #7**
+2. ✅ Check accelerator label on deployment (MOST COMMON)
+3. ✅ Verify API version is `llmd.ai/v1alpha1`
+4. ✅ Check variantCost is string (e.g., `"100"`)
+5. ✅ Verify namespace-scoping configuration
 
 **Resolution Steps**:
+
 ```bash
 # Step 1: Add accelerator label (MOST COMMON FIX)
 kubectl label deployment <name> -n <namespace> \
@@ -66,32 +175,24 @@ kubectl logs -n workload-variant-autoscaler-system \
 **Symptoms**: VariantAutoscaling shows `METRICSREADY: False` status.
 
 **Quick Diagnosis Checklist**:
-1. ✅ Wait 2 minutes for Prometheus scrape interval
-2. ✅ Check Service and ServiceMonitor exist
-3. ✅ Verify metrics endpoint is accessible
-4. ✅ Send test traffic to generate metrics
 
-**Resolution Steps**:
+1. ✅ Check WVA logs for `"Skipping status update for VA without accelerator info"` → accelerator label missing on VA (see **Known Issues #4 and #6**)
+2. ✅ Wait 2 minutes for Prometheus scrape interval
+3. ✅ Check PodMonitor/ServiceMonitor exists and matches pod labels
+4. ✅ Verify metrics endpoint is accessible, send test traffic if needed
+
 ```bash
-# Step 1: Wait for Prometheus scrape (most common - just need patience)
-sleep 120 && kubectl get variantautoscaling -n <namespace>
+# Check for accelerator label issue
+kubectl logs -n <namespace> -l control-plane=controller-manager | grep "accelerator"
 
-# Step 2: Check metrics infrastructure exists
-kubectl get service,servicemonitor -n <namespace> | grep metrics
+# Wait for Prometheus scrape, then recheck
+kubectl get variantautoscaling -n <namespace>
 
-# Step 3: Test metrics endpoint directly
+# Check metrics infrastructure
+kubectl get podmonitor,servicemonitor -n <namespace>
+
+# Test metrics endpoint directly
 kubectl exec -n <namespace> <pod-name> -- curl -s localhost:8000/metrics | grep vllm
-
-# Step 4: If no metrics, create Service and ServiceMonitor
-# See Issue #2 below for full YAML examples
-
-# Step 5: Send test traffic to generate metrics
-curl -X POST http://<gateway-url>/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "<model-id>", "messages": [{"role": "user", "content": "test"}]}'
-
-# Step 6: Check again after 2 minutes
-sleep 120 && kubectl get variantautoscaling -n <namespace>
 ```
 
 ### Pattern 3: Not Scaling
@@ -115,7 +216,7 @@ kubectl get hpa -n <namespace> -o yaml | grep -A 5 metricSelector
 # Must match: variant_name=<va-name> AND exported_namespace=<namespace>
 
 # Step 3: Check WVA scaling decisions
-kubectl logs -n workload-variant-autoscaler-system \
+kubectl logs -n <namespace> \
   -l app.kubernetes.io/name=workload-variant-autoscaler | grep "desired replicas"
 
 # Step 4: Check HPA status
@@ -123,7 +224,7 @@ kubectl describe hpa -n <namespace>
 # Look for "unable to get metric" or other errors
 
 # Step 5: If saturation never reached, lower thresholds
-kubectl edit configmap -n workload-variant-autoscaler-system \
+kubectl edit configmap -n <namespace> \
   wva-saturation-scaling-config
 # Try: kvCacheThreshold: "0.70" (from 0.80)
 
@@ -168,26 +269,16 @@ kubectl get variantautoscaling -n <namespace> -o yaml | grep variantCost
 # Should show: variantCost: "100"
 # NOT: variantCost: 100
 
-# 5. Check which namespace WVA is watching
-kubectl logs -n workload-variant-autoscaler-system \
+# 5. Check which namespace WVA is watching (WVA is deployed in the target namespace)
+kubectl logs -n <namespace> \
   -l app.kubernetes.io/name=workload-variant-autoscaler | grep "Watching"
 
-# 6. If namespace-scoping not working, check ConfigMap (NOT environment variable)
-kubectl get configmap -n workload-variant-autoscaler-system \
-  wva-variantautoscaling-config -o yaml
-
-# 7. Fix namespace-scoping via Helm values (CORRECT WAY)
-helm upgrade workload-variant-autoscaler ./charts/workload-variant-autoscaler \
-  --namespace workload-variant-autoscaler-system \
-  --set controller.watchNamespace=<your-namespace> \
-  --reuse-values
-
-# 8. Restart WVA controller after fixes
-kubectl rollout restart deployment -n workload-variant-autoscaler-system \
+# 6. Restart WVA controller after fixes
+kubectl rollout restart deployment -n <namespace> \
   workload-variant-autoscaler-controller-manager
 
-# 9. Verify WVA now detects the resource
-kubectl logs -n workload-variant-autoscaler-system \
+# 7. Verify WVA now detects the resource
+kubectl logs -n <namespace> \
   -l app.kubernetes.io/name=workload-variant-autoscaler | grep "VariantAutoscaling"
 ```
 
@@ -200,33 +291,9 @@ kubectl logs -n workload-variant-autoscaler-system \
 
 ### 1. METRICSREADY: False
 
-**Symptoms**: VariantAutoscaling shows `METRICSREADY: False`
+> **If WVA logs say `"Skipping status update for VA without accelerator info"`**: see **Known Issues #4** (missing accelerator label on VA) and **Known Issue #6** (OpenShift Helm chart sets wrong label).
 
-**Common Causes**:
-- Prometheus hasn't scraped metrics yet (wait 1-2 minutes after deployment)
-- No traffic to model (metrics are zero)
-- PodMonitor not configured or not matching pod labels
-- Prometheus connection issues
-
-**Solutions**:
-
-```bash
-# Wait for Prometheus scrape interval
-sleep 120 && kubectl get variantautoscaling -n <namespace>
-
-# Send test traffic to generate metrics
-kubectl port-forward -n <namespace> svc/<gateway-service> 8080:80 &
-curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model": "<model-id>", "messages": [{"role": "user", "content": "test"}]}'
-
-# Check if pods expose metrics
-kubectl exec -n <namespace> <pod-name> -- curl -s localhost:8000/metrics | grep vllm
-
-# Verify PodMonitor exists and matches labels
-kubectl get podmonitor -n <namespace>
-kubectl get pods -n <namespace> --show-labels
-```
+For all other causes (Prometheus not scraping, no traffic, PodMonitor mismatch), see **Pattern 2** above and **Issue #2** below.
 
 ### 2. Missing Metrics Service and ServiceMonitor
 
@@ -400,7 +467,9 @@ kubectl exec -n workload-variant-autoscaler-system \
 **Symptoms**: Replicas don't scale to zero despite idle period
 
 **Common Causes**:
-- HPAScaleToZero feature gate not enabled
+
+- `prometheus-adapter` backend in use — HPA fundamentally cannot scale to 0; KEDA is required for scale-to-zero
+- HPAScaleToZero feature gate not enabled (vanilla Kubernetes with KEDA)
 - HPA minReplicas not set to 0
 - Scale-to-zero not enabled in WVA config
 - Retention period not elapsed
