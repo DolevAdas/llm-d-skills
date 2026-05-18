@@ -236,7 +236,7 @@ Step 5:  Generate reusable deployment script
 
 | Resource | Link / Command |
 |----------|---------------|
-| WVA User Guide | `${WVA_REPO_PATH}/docs/user-guide/` |
+| WVA User Guide | `${WVA_REPO_PATH}/docs/` |
 | Helm Values | `${WVA_REPO_PATH}/charts/workload-variant-autoscaler/values.yaml` |
 | Troubleshooting | [Troubleshooting.md](./Troubleshooting.md) |
 | WVA GitHub | https://github.com/llm-d/llm-d-workload-variant-autoscaler |
@@ -274,64 +274,63 @@ helm uninstall workload-variant-autoscaler -n <namespace>
 
 ### 4b. Deploy Controller + First Model (Makefile)
 
-Use the appropriate Makefile target. The first selected deployment gets the controller + VA + HPA.
+Use the appropriate Makefile target. The Makefile target calls `deploy/install.sh` (WVA controller + monitoring + scaler backend) followed by `deploy/install-llmd-infra.sh` (llm-d infrastructure). VA and HPA for the first model are deployed by default via the Helm chart (`va.enabled: true`, `hpa.enabled: true`).
+
+The Makefile only propagates `NAMESPACE`, `IMG`, `ENVIRONMENT`, and `LLM_D_RELEASE` to the scripts. All other configuration must be `export`ed as environment variables **before** calling `make`.
 
 **Kubernetes:**
 ```bash
 cd <WVA_REPO_PATH>
 
-make deploy-wva-on-k8s \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=<namespace> \
-  LLMD_NS=<namespace> \
-  NAMESPACE_SCOPED=true \
-  DEPLOY_LLM_D=false \
-  DEPLOY_LWS=false \
-  DEPLOY_VA=true \
-  DEPLOY_HPA=true \
-  LLM_D_MODELSERVICE_NAME=<first-deployment-without-decode-suffix> \
-  MODEL_ID="<model-id>" \
-  ACCELERATOR_TYPE=<detected-accelerator> \
-  KV_CACHE_THRESHOLD=<kv_cache_threshold> \
-  QUEUE_LENGTH_THRESHOLD=<queue_length_threshold> \
-  KV_SPARE_TRIGGER=<kv_spare_trigger> \
-  QUEUE_SPARE_TRIGGER=<queue_spare_trigger> \
-  HPA_MIN_REPLICAS=<min_replicas> \
-  HPA_STABILIZATION_SECONDS=<scale_up_window> \
-  SCALER_BACKEND=<prometheus-adapter|keda>
+export NAMESPACE=<namespace>
+export LLMD_NS=<namespace>
+export NAMESPACE_SCOPED=true
+export SCALER_BACKEND=<prometheus-adapter|keda>
+export MODEL_ID="<model-id>"
+export LLM_D_MODELSERVICE_NAME=<first-deployment-without-decode-suffix>
+export SKIP_TLS_VERIFY=false
+export DEPLOY_LWS=false          # set false if LWS already installed
+export DEPLOY_PROMETHEUS=true    # set false if Prometheus already installed
+export DEPLOY_WVA=true
+export DEPLOY_PROMETHEUS_ADAPTER=true  # set false if using KEDA
+
+make deploy-wva-on-k8s IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
 ```
 
 **OpenShift:**
 ```bash
 cd <WVA_REPO_PATH>
 
-E2E_TESTS_ENABLED=true INSTALL_GATEWAY_CTRLPLANE=false \
-make deploy-wva-on-openshift \
-  IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest \
-  NAMESPACE=<namespace> \
-  LLMD_NS=<namespace> \
-  NAMESPACE_SCOPED=true \
-  DEPLOY_LLM_D=false \
-  DEPLOY_LWS=false \
-  DEPLOY_VA=true \
-  DEPLOY_HPA=true \
-  LLM_D_MODELSERVICE_NAME=<first-deployment-without-decode-suffix> \
-  MODEL_ID="<model-id>" \
-  ACCELERATOR_TYPE=<detected-accelerator> \
-  KV_CACHE_THRESHOLD=<kv_cache_threshold> \
-  QUEUE_LENGTH_THRESHOLD=<queue_length_threshold> \
-  KV_SPARE_TRIGGER=<kv_spare_trigger> \
-  QUEUE_SPARE_TRIGGER=<queue_spare_trigger> \
-  HPA_MIN_REPLICAS=<min_replicas> \
-  HPA_STABILIZATION_SECONDS=<scale_up_window> \
-  SCALER_BACKEND=prometheus-adapter \
-  MONITORING_NAMESPACE=<openshift-monitoring|openshift-user-workload-monitoring> \
-  SKIP_TLS_VERIFY=true
+export NAMESPACE=<namespace>
+export LLMD_NS=<namespace>
+export NAMESPACE_SCOPED=true
+export SCALER_BACKEND=prometheus-adapter
+export MODEL_ID="<model-id>"
+export LLM_D_MODELSERVICE_NAME=<first-deployment-without-decode-suffix>
+export MONITORING_NAMESPACE=<openshift-user-workload-monitoring|openshift-monitoring>
+export SKIP_TLS_VERIFY=true
+
+INSTALL_GATEWAY_CTRLPLANE=false \
+make deploy-wva-on-openshift IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
 ```
 
-> **`LLM_D_MODELSERVICE_NAME`**: The Makefile appends `-decode` to this value. Set it **without** the `-decode` suffix. Example: deployment `my-model-decode` → `LLM_D_MODELSERVICE_NAME=my-model`.
+**To customise thresholds and HPA settings**, run a `helm upgrade` after the initial deploy (or pass a custom `VALUES_FILE`):
+```bash
+helm upgrade workload-variant-autoscaler <WVA_REPO_PATH>/charts/workload-variant-autoscaler \
+  -n workload-variant-autoscaler-system --reuse-values \
+  --set wva.capacityScaling.default.kvCacheThreshold=<kv_cache_threshold> \
+  --set wva.capacityScaling.default.queueLengthThreshold=<queue_length_threshold> \
+  --set wva.capacityScaling.default.kvSpareTrigger=<kv_spare_trigger> \
+  --set wva.capacityScaling.default.queueSpareTrigger=<queue_spare_trigger> \
+  --set hpa.minReplicas=<min_replicas> \
+  --set hpa.maxReplicas=<max_replicas> \
+  --set hpa.behavior.scaleUp.stabilizationWindowSeconds=<scale_up_window> \
+  --set hpa.behavior.scaleDown.stabilizationWindowSeconds=<scale_down_window>
+```
 
-> **OpenShift `E2E_TESTS_ENABLED=true INSTALL_GATEWAY_CTRLPLANE=false`**: Prevents the script from stopping at an interactive gateway prompt.
+> **`LLM_D_MODELSERVICE_NAME`**: Used by `install-llmd-infra.sh` as the base name for the llm-d ModelService. The deploy scripts append `-decode` for the Deployment name. Set it **without** the `-decode` suffix. Example: deployment `my-model-decode` → `LLM_D_MODELSERVICE_NAME=my-model`.
+
+> **OpenShift `INSTALL_GATEWAY_CTRLPLANE=false`**: Skips gateway control plane installation (defaults to `true`). Set to `false` when the gateway control plane is already installed.
 
 > **OpenShift exit code 2**: The Makefile chains scripts that may exit 2 even when WVA itself succeeded. Always verify with kubectl before assuming failure.
 
@@ -739,37 +738,59 @@ These must ALL be true for WVA to work:
 6. **`variantCost` must be a string** (e.g., `"10.0"` not `10.0`)
 7. **API version must be `llmd.ai/v1alpha1`** (not `inference.llmd.ai/v1alpha1`)
 
-### Makefile Variables Quick Reference
+### Environment Variables and Helm Values Quick Reference
+
+The `deploy-wva-on-k8s` / `deploy-wva-on-openshift` Makefile targets only propagate `NAMESPACE`, `IMG`, `ENVIRONMENT`, and `LLM_D_RELEASE` directly. Everything else must be **`export`ed** before calling `make`, or set via `helm upgrade --set` for chart-level values.
+
+#### Env vars for `deploy/install.sh` (export before `make`)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `IMG` | WVA container image | `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` |
-| `NAMESPACE` | Target namespace | `workload-variant-autoscaler-system` |
-| `LLMD_NS` | Namespace where llm-d runs | same as NAMESPACE |
-| `NAMESPACE_SCOPED` | Limit WVA to single namespace | `false` — **always set `true`** |
-| `DEPLOY_LLM_D` | Deploy llm-d stack | `true` — set `false` when llm-d exists |
-| `DEPLOY_LWS` | Deploy LeaderWorkerSet | `true` — set `false` if not needed |
-| `DEPLOY_VA` | Deploy VariantAutoscaling | `false` — **set `true`** |
-| `DEPLOY_HPA` | Deploy scaler (HPA or ScaledObject) | `false` — **set `true`** |
-| `LLM_D_MODELSERVICE_NAME` | Deployment name **without** `-decode` suffix | — |
-| `MODEL_ID` | Model identifier | `unsloth/Meta-Llama-3.1-8B` |
-| `ACCELERATOR_TYPE` | GPU vendor label (`nvidia`, `amd`, `cpu`) | `H100` |
-| `KV_CACHE_THRESHOLD` | KV cache saturation threshold | `0.80` |
-| `QUEUE_LENGTH_THRESHOLD` | Queue depth saturation threshold | `5` |
-| `KV_SPARE_TRIGGER` | Proactive spare KV trigger | `0.10` |
-| `QUEUE_SPARE_TRIGGER` | Proactive spare queue trigger | `3` |
-| `HPA_MIN_REPLICAS` | Minimum replicas | `1` |
-| `HPA_STABILIZATION_SECONDS` | Scale-up AND scale-down window (symmetric) | `240` |
-| `SCALER_BACKEND` | HPA → `prometheus-adapter`, KEDA → `keda` | `prometheus-adapter` (HPA) |
-| `MONITORING_NAMESPACE` | Prometheus namespace (OpenShift) | `monitoring` |
+| `IMG` | WVA container image (also a Make arg) | `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` |
+| `NAMESPACE` | WVA controller namespace (also a Make arg) | `workload-variant-autoscaler-system` |
+| `LLMD_NS` | Namespace where llm-d runs | `llm-d-inference-scheduler` |
+| `NAMESPACE_SCOPED` | Limit WVA to single namespace | `true` — **keep `true` for production** |
+| `DEPLOY_WVA` | Deploy WVA controller | `true` |
+| `DEPLOY_LWS` | Deploy LeaderWorkerSet | `true` — set `false` if already installed |
+| `DEPLOY_PROMETHEUS` | Deploy kube-prometheus-stack | `true` — set `false` if already installed |
+| `DEPLOY_PROMETHEUS_ADAPTER` | Deploy Prometheus Adapter | `true` — set `false` when using KEDA |
+| `SCALER_BACKEND` | `prometheus-adapter` (HPA) or `keda` | `prometheus-adapter` |
+| `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` (k8s) / `openshift-user-workload-monitoring` (OCP) |
 | `SKIP_TLS_VERIFY` | Skip TLS for Prometheus | `false` |
+
+#### Env vars for `deploy/install-llmd-infra.sh` (export before `make`)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LLM_D_MODELSERVICE_NAME` | llm-d ModelService base name **without** `-decode` suffix | `ms-<GUIDE_NAME>-llm-d-modelservice` |
+| `MODEL_ID` | Model identifier | `unsloth/Meta-Llama-3.1-8B` |
+| `ACCELERATOR_TYPE` | GPU vendor label (`nvidia`, `amd`, `cpu`) — auto-detected if unset | `H100` |
+| `INSTALL_GATEWAY_CTRLPLANE` | Install gateway control plane | `true` — set `false` if already installed |
+
+#### Helm chart values (set via `helm upgrade --set` after deploy, or in `VALUES_FILE`)
+
+| Helm value | Description | Default |
+|------------|-------------|---------|
+| `wva.capacityScaling.default.kvCacheThreshold` | KV cache saturation threshold | `0.80` |
+| `wva.capacityScaling.default.queueLengthThreshold` | Queue depth saturation threshold | `5` |
+| `wva.capacityScaling.default.kvSpareTrigger` | Proactive spare KV trigger | `0.10` |
+| `wva.capacityScaling.default.queueSpareTrigger` | Proactive spare queue trigger | `3` |
+| `hpa.minReplicas` | Minimum replicas | `1` |
+| `hpa.maxReplicas` | Maximum replicas | `2` |
+| `hpa.behavior.scaleUp.stabilizationWindowSeconds` | Scale-up stabilization window | `240` |
+| `hpa.behavior.scaleDown.stabilizationWindowSeconds` | Scale-down stabilization window | `240` |
+| `va.accelerator` | GPU vendor label (fallback if auto-detect fails) | `H100` |
+| `va.variantCost` | Cost weight string | `"10.0"` |
+| `llmd.namespace` | Namespace WVA targets for VA/HPA | `llm-d-autoscaler` |
+| `llmd.modelName` | Deployment base name (without `-decode`) | `ms-workload-autoscaler-llm-d-modelservice` |
+| `llmd.modelID` | Model identifier for VA spec | `Qwen/Qwen3-0.6B` |
 
 ### ConfigMap Live Tuning
 
 Saturation thresholds live in ConfigMap `wva-saturation-scaling-config`. Changes take effect without controller restart:
 
 ```bash
-kubectl edit configmap wva-saturation-scaling-config -n <namespace>
+kubectl edit configmap workload-variant-autoscaler-wva-saturation-scaling-config -n <namespace>
 ```
 
 ### Asymmetric Stabilization Windows (post-deploy)
