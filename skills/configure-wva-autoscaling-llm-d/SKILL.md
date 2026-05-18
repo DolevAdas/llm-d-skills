@@ -87,12 +87,9 @@ Then **auto-detect** the rest:
 
 **First ask:** "Which scaler backend: HPA or KEDA?"
 
-**Then ask:** "Do you want the same threshold settings for all deployments, or configure each deployment separately?"
+#### Namespace-level settings (ask once — apply to all deployments in the namespace)
 
-- If **same for all** → collect shared defaults once, then only ask per-deployment for min/max/cost.
-- If **per-deployment** → collect all parameters individually for each deployment.
-
-#### Shared defaults (ask once, used as baseline for all deployments)
+Collect these values ONCE before asking about per-deployment configuration:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -103,24 +100,34 @@ Then **auto-detect** the rest:
 | `scale_up_window` | Seconds to wait before scaling up | `120` |
 | `scale_down_window` | Seconds to wait before scaling down | `300` |
 
+**Then ask:** "Do you want the same settings for all deployments, or configure each deployment separately?"
+
+- If **same for all** → use the namespace-level values above for all deployments; only ask per-deployment for min/max/cost.
+- If **per-deployment** → ask only the per-deployment parameters below for each deployment (namespace-level values are the baseline; the user can override specific thresholds per deployment).
+
 #### Per-deployment settings (ask for each selected deployment)
 
-For each deployment, first show the shared defaults and ask:
-> "For deployment `<name>` (`<model-id>`): use shared defaults, or override specific values?"
+For each deployment, first show the namespace-level defaults and ask:
+> "For deployment `<name>` (`<model-id>`): use namespace defaults, or override specific values?"
 
-These parameters can be overridden per deployment:
+Always collect these required per-deployment parameters:
 
-| Parameter | Description | Default (from shared) |
-|-----------|-------------|----------------------|
+| Parameter | Description | Default |
+|-----------|-------------|---------|
 | `min_replicas` | Minimum replicas (0 only with KEDA) | `1` |
 | `max_replicas` | Maximum replicas | `10` |
 | `variant_cost` | Cost weight — lower-cost variants scale first | `"10.0"` |
-| `kv_cache_threshold` | Override KV saturation threshold for this deployment | *(shared value)* |
-| `queue_length_threshold` | Override queue saturation threshold for this deployment | *(shared value)* |
-| `kv_spare_trigger` | Override spare KV trigger for this deployment | *(shared value)* |
-| `queue_spare_trigger` | Override spare queue trigger for this deployment | *(shared value)* |
-| `scale_up_window` | Override scale-up stabilization for this deployment | *(shared value)* |
-| `scale_down_window` | Override scale-down stabilization for this deployment | *(shared value)* |
+
+If the user wants to override thresholds for this specific deployment, also collect:
+
+| Parameter | Description | Default (from namespace) |
+|-----------|-------------|----------------------|
+| `kv_cache_threshold` | Override KV saturation threshold for this deployment | *(namespace value)* |
+| `queue_length_threshold` | Override queue saturation threshold for this deployment | *(namespace value)* |
+| `kv_spare_trigger` | Override spare KV trigger for this deployment | *(namespace value)* |
+| `queue_spare_trigger` | Override spare queue trigger for this deployment | *(namespace value)* |
+| `scale_up_window` | Override scale-up stabilization for this deployment | *(namespace value)* |
+| `scale_down_window` | Override scale-down stabilization for this deployment | *(namespace value)* |
 
 After user provides all values, proceed to save.
 
