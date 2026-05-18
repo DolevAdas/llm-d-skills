@@ -1,0 +1,28 @@
+# WVA Configuration: Balanced preset
+# Saved by configure-wva-autoscaling-llm-d skill
+# Reload with: Option 3 (Load from saved config) in Step 2
+
+namespace: example-namespace
+platform: kubernetes  # or openshift
+scaler_backend: prometheus-adapter  # or keda
+wva_repo_path: /path/to/llm-d-workload-variant-autoscaler
+
+# Shared defaults (applied to all deployments unless overridden)
+defaults:
+  kv_cache_threshold: "0.80"
+  queue_length_threshold: "5"
+  kv_spare_trigger: "0.10"
+  queue_spare_trigger: "3"
+  scale_up_window: 120
+  scale_down_window: 300
+
+# Per-deployment configuration
+# Any default can be overridden per deployment by adding the field here.
+models:
+  - deployment: my-model-decode
+    model_id: "Qwen/Qwen3-32B"
+    accelerator: nvidia  # auto-detected from cluster — may be nvidia, amd, or cpu
+    min_replicas: 1
+    max_replicas: 10
+    variant_cost: "10.0"
+    # No overrides — uses all shared defaults
