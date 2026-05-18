@@ -19,3 +19,4 @@ In the case of Claude code, skills residing in `.claude/skills/` at the project 
 | [teardown-llm-d](skills/teardown-llm-d/) | Tear down, remove, clean up, or undeploy a deployed llm-d stack. |
 | [run-llm-d-benchmark](skills/run-llm-d-benchmark/) | Run a benchmark workload against an already deployed llm-d stack using llm-d-benchmark tooling. |
 | [compare-llm-d-configurations](skills/compare-llm-d-configurations/) | Compare the benchmark performance of two llm-d stack configurations end-to-end. |
+| [configure-wva-autoscaling-llm-d](skills/configure-wva-autoscaling-llm-d/) | Configure and optimize Workload Variant Autoscaler (WVA) for llm-d inference deployments. |

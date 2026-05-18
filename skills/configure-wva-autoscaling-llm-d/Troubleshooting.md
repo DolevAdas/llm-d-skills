@@ -8,19 +8,7 @@ Quick reference for common WVA issues. For detailed troubleshooting, see `${WVA_
 
 These are real issues encountered during deployment. Read before debugging.
 
-### 1. OpenShift: Interactive Gateway Prompt Causes Exit Code 2
-
-**Symptom**: `make deploy-wva-on-openshift` exits with code 2 after printing a gateway installation prompt.
-
-**Cause**: The deploy script calls `prompt_gateway_installation()` when `E2E_TESTS_ENABLED` is not `true`. This is an interactive prompt that blocks non-TTY execution.
-
-**Fix**: Prefix the make command with:
-
-```bash
-E2E_TESTS_ENABLED=true INSTALL_GATEWAY_CTRLPLANE=false make deploy-wva-on-openshift ...
-```
-
-### 2. CRD Field Manager Conflict
+### 1. CRD Field Manager Conflict
 
 **Symptom**: Helm fails with:
 
