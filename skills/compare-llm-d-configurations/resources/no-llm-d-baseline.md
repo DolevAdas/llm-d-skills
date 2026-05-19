@@ -21,7 +21,7 @@ Only if the run is labeled as "baseline" or the user indicates it's a baseline c
      name: llm-d-baseline-model-server
    spec:
      selector:
-       llm-d.ai/inference-serving: "true"
+       llm-d.ai/role=decode
      ports:
      - name: http
        protocol: TCP
@@ -36,12 +36,7 @@ Only if the run is labeled as "baseline" or the user indicates it's a baseline c
    kubectl get endpoints llm-d-baseline-model-server -n $NAMESPACE
    ```
 
-   If no endpoints exist, check the running pod labels:
-   ```bash
-   kubectl get pods -n $NAMESPACE -l llm-d.ai/inference-serving=true
-   ```
-
-   If no pods match, list all pods and their labels to find the correct selector:
+   If no endpoints exist, check the running pods' labels. List all pods and their labels to find the correct selector:
    ```bash
    kubectl get pods -n $NAMESPACE --show-labels
    ```

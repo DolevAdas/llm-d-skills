@@ -210,30 +210,59 @@ kustomize build guides/<guide>/modelserver/<accelerator>/<server>/ | kubectl app
    - HTTPRoute shows Accepted
    - Check PVCs (if applicable)
 
-3. **Connectivity test:**
-   
-   **Note:** By default, the connectivity test is NOT performed. Only run this test if explicitly requested by the user.
-   
-   <ask_followup_question>
-   <question>Would you like to run the connectivity test?</question>
-   <follow_up>
-   <suggest>No - Skip connectivity test (recommended default)</suggest>
-   <suggest>Yes - Run connectivity test</suggest>
-   </follow_up>
-   </ask_followup_question>
-   
-   If yes:
-   - Expose the endpoint using the current verification guide: port-forward, external IP, ingress, or route as described in `${LLMD_PATH}/guides/02_verifying_a_guide.md`
-   - Test endpoint: `curl ${ENDPOINT}/v1/models`
-   - Send test request: `curl ${ENDPOINT}/v1/completions -d {...}`
-   - Query `/v1/models` first and use the actual returned model name in completion requests
-   Model loading can take several minutes depending on model size
+3. **Deployment readiness test (non-intrusive):**
+   - **Purpose:** Verify the llm-d stack is operational without sending inference requests
+   - **This test does NOT populate the KV cache**
+   - Check deployment readiness:
+     ```bash
+     kubectl get deployment -n ${NAMESPACE}
+     kubectl get inferencepool -n ${NAMESPACE}
+     kubectl get gateway -n ${NAMESPACE}
+     kubectl get httproute -n ${NAMESPACE}
+     ```
+   - Verify all resources show healthy status:
+     - Deployments: READY column shows desired/current match (e.g., 1/1)
+     - InferencePool: STATUS shows "Ready"
+     - Gateway: PROGRAMMED shows "True"
+     - HTTPRoute: ACCEPTED shows "True"
+   - Check service endpoints are configured:
+     ```bash
+     kubectl get svc -n ${NAMESPACE}
+     kubectl get endpoints -n ${NAMESPACE}
+     ```
+   - Verify pods are ready and not restarting:
+     ```bash
+     kubectl get pods -n ${NAMESPACE} -o wide
+     ```
+   - **Success criteria:** All resources show healthy status, pods are Running with READY 1/1, no restarts
 
-
-4. **Performance check:**
-   - Monitor resource usage: `kubectl top pods -n {namespace}`
-   - Check GPU utilization (if applicable)
-   - Verify response times meet requirements
+4. **Connectivity test:**
+   - **MANDATORY WORKFLOW - You MUST follow this step:**
+   
+   **Step 1: MANDATORY - Ask user if they want to generate verification script**
+   - **You MUST use `ask_followup_question` tool - this is NON-NEGOTIABLE**
+   - Explain what the verification script will do in a few words
+   - Example:
+     ```
+     <ask_followup_question>
+     <question>I can generate a verification script that will:
+     - Expose the llm-d endpoint (via port-forward)
+     - Test the /v1/models endpoint
+     - Send a test completion request
+     
+     Would you like me to generate this verification script?</question>
+     <follow_up>
+      <suggest>No</suggest>
+      <suggest>Yes, generate the verification script</suggest>
+     </follow_up>
+     </ask_followup_question>
+     ```
+   
+   **If user agrees to generate the script:**
+   - Read and follow the detailed instructions in [`references/connectivity-verification.md`](references/connectivity-verification.md)
+   - The reference file contains Steps 2-4 for generating, showing, and executing the verification script
+   
+   **CRITICAL: You cannot skip Step 1. Always ask the user first before reading the connectivity verification instructions.**
 
 **Success Criteria:**
 - All required pods are Running state with N/N ready
