@@ -15,6 +15,64 @@ The scripts in this directory provide:
 
 ### Deployment Scripts
 
+#### [`preflight-check.sh`](./preflight-check.sh)
+
+**Purpose**: Pre-flight checks before deploying WVA — detects existing controller and validates scaler backend.
+
+**Usage**:
+
+```bash
+./preflight-check.sh <wva-namespace> [--scaler-backend prometheus-adapter|keda]
+```
+
+**Checks**: existing WVA controller, external metrics API availability, KEDA presence (if selected), cluster reachability. Exits 0 if all clear, 1 if issues found.
+
+---
+
+#### [`detect-accelerator.sh`](./detect-accelerator.sh)
+
+**Purpose**: Auto-detects the GPU accelerator vendor label (`nvidia`, `amd`, or `cpu`) for a deployment by inspecting deployment labels, pod-template labels, node selectors, and running node labels — in that order.
+
+**Usage**:
+
+```bash
+ACCELERATOR=$(./detect-accelerator.sh <namespace> <deployment-name>)
+```
+
+**Output**: single word on stdout (`nvidia`, `amd`, or `cpu`). Exits 1 if detection fails — prompt the user to specify manually.
+
+---
+
+#### [`apply-hpa.sh`](./apply-hpa.sh)
+
+**Purpose**: Generates and applies WVA autoscaling resources for a single deployment. Supports three modes:
+
+| Mode | Resources created | When to use |
+| ---- | ----------------- | ----------- |
+| `annotated` | Annotated HPA only | Preferred — no VA CRD required |
+| `va-hpa` | VariantAutoscaling + HPA | VA CRD path, Prometheus Adapter backend |
+| `keda` | VariantAutoscaling + ScaledObject | VA CRD path, KEDA backend |
+
+**Usage**:
+```bash
+./apply-hpa.sh \
+  --mode <annotated|va-hpa|keda> \
+  --namespace <ns> \
+  --deployment <full-deployment-name> \
+  --model-id "<model-id>" \
+  --variant-cost "<cost>" \
+  --accelerator <nvidia|amd|cpu> \   # not required for annotated mode
+  --min-replicas <n> \
+  --max-replicas <n> \
+  --scale-up-window <seconds> \
+  --scale-down-window <seconds> \
+  [--prometheus-url <url>]           # required for keda mode
+```
+
+Resource names are derived from `--deployment` by stripping a trailing `-decode` suffix.
+
+---
+
 #### [`generate-deploy-script.sh`](./generate-deploy-script.sh) ⭐ **Start Here**
 **Purpose**: Generates a customized deployment script from template based on user requirements
 

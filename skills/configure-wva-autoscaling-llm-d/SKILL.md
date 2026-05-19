@@ -257,21 +257,14 @@ Execute each sub-step one at a time, verifying after each.
 ### 4a. Pre-flight Checks
 
 ```bash
-# Check for existing WVA controller deployment (WVA_NS = namespace from Step 1)
-kubectl get deployment workload-variant-autoscaler-controller-manager \
-  -n <WVA_NS> 2>/dev/null
-
-# Check scaler backend availability
-kubectl get apiservice v1beta1.external.metrics.k8s.io 2>/dev/null | grep -o 'True\|False'
-# If KEDA backend: verify KEDA is installed
-kubectl get deployment keda-operator -A 2>/dev/null
+cd skills/configure-wva-autoscaling-llm-d/scripts/
+./preflight-check.sh <WVA_NS> --scaler-backend <prometheus-adapter|keda>
 ```
 
-If a stale WVA controller exists, inform the user and ask permission to remove:
+If a stale WVA controller is found, ask permission to remove:
 ```bash
 cd <WVA_REPO_PATH>
 WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
-# or: make undeploy-wva-on-k8s
 ```
 
 **STOP. Ask:** "Pre-flight checks complete. Ready to deploy WVA controller via Makefile? (yes/no)"
@@ -356,53 +349,38 @@ Expected: controller Running, logs contain `"Watching single namespace"` with `"
 
 ### 4d. Add Accelerator Labels
 
-**First, auto-detect the accelerator for each deployment.** Run these checks in order and use the first value found:
+Auto-detect the accelerator for each deployment:
 
 ```bash
-# 1. Check if the deployment already has the label
-kubectl get deployment <deployment-name> -n <namespace> \
-  -o jsonpath='{.metadata.labels.inference\.optimization/acceleratorName}'
-
-# 2. Check the pod template labels
-kubectl get deployment <deployment-name> -n <namespace> \
-  -o jsonpath='{.spec.template.metadata.labels.inference\.optimization/acceleratorName}'
-
-# 3. Check node selector for GPU vendor hints
-kubectl get deployment <deployment-name> -n <namespace> \
-  -o jsonpath='{.spec.template.spec.nodeSelector}'
-
-# 4. Check the nodes where the pods are running
-kubectl get pod -n <namespace> -l llm-d.ai/role=decode \
-  -o jsonpath='{.items[0].spec.nodeName}' | \
-  xargs kubectl get node -o jsonpath='{.metadata.labels}' | grep -oE '"(nvidia|amd)\.com[^"]*"' | head -1
+ACCELERATOR=$(skills/configure-wva-autoscaling-llm-d/scripts/detect-accelerator.sh \
+  <WVA_NS> <deployment-name>)
+echo "Detected: $ACCELERATOR"
 ```
 
-Valid values: `nvidia` (covers H100, A100, L4, A10, etc.), `amd`, `cpu`.
+If the script exits with an error, ask the user: "Could not auto-detect accelerator for `<deployment>`. Is it `nvidia`, `amd`, or `cpu`?"
 
-> **This is not always `nvidia`.** Always detect from the cluster — do not assume.
+> Valid values: `nvidia` (covers H100, A100, L4, A10, etc.), `amd`, `cpu`. **Do not assume `nvidia`.**
 
-Report what was detected: "Detected accelerator: `<value>` for deployment `<name>`."
-If detection is ambiguous, ask the user: "Could not auto-detect accelerator for `<deployment>`. Is it `nvidia`, `amd`, or `cpu`?"
-
-Then apply the label for EACH selected deployment:
+Apply the label for EACH selected deployment:
 ```bash
-kubectl label deployment <deployment-name> -n <namespace> \
-  inference.optimization/acceleratorName=<detected-accelerator> --overwrite
+kubectl label deployment <deployment-name> -n <WVA_NS> \
+  inference.optimization/acceleratorName=$ACCELERATOR --overwrite
 ```
 
 **Verify:**
 ```bash
-kubectl get deployment -n <namespace> \
+kubectl get deployment -n <WVA_NS> \
   -o custom-columns=NAME:.metadata.name,ACCELERATOR:.metadata.labels."inference\.optimization/acceleratorName"
 ```
 
-If using the VA-based path (not annotation-based), also check and correct the accelerator label on the VA:
+If using the VA-based path (not annotation-based), also verify and correct the VA's accelerator label:
 ```bash
 # VA-based path only — skip if using annotation-based HPAs (no VA CRD exists)
-kubectl get variantautoscaling -n <namespace> -o jsonpath='{.items[0].metadata.labels.inference\.optimization/acceleratorName}'
-# If the value is a GPU model name (e.g., "H100") instead of the vendor (e.g., "nvidia"), patch it:
-kubectl patch variantautoscaling <va-name> -n <namespace> --type=merge \
-  -p '{"metadata":{"labels":{"inference.optimization/acceleratorName":"<detected-accelerator>"}}}'
+kubectl get variantautoscaling -n <WVA_NS> \
+  -o jsonpath='{.items[*].metadata.labels.inference\.optimization/acceleratorName}'
+# If any VA shows a GPU model name (e.g., "H100") instead of vendor (e.g., "nvidia"), patch it:
+kubectl patch variantautoscaling <va-name> -n <WVA_NS> --type=merge \
+  -p '{"metadata":{"labels":{"inference.optimization/acceleratorName":"'$ACCELERATOR'"}}}'
 ```
 
 ---
@@ -415,186 +393,58 @@ Apply a VariantAutoscaling + HPA (or annotated HPA) for **every** selected deplo
 
 > **Namespace scope**: With `NAMESPACE_SCOPED=true` the controller watches only the namespace where it runs (`WVA_NS`). Deploy VAs and HPAs to that **same** namespace, or set `NAMESPACE_SCOPED=false` to watch all namespaces.
 
-**For HPA backend (uses `SCALER_BACKEND=prometheus-adapter`):**
+Run `apply-hpa.sh` for **each** selected deployment. Choose the mode that matches your scaler backend and VA preference:
+
+**Annotated HPA (preferred — no VA CRD required):**
 ```bash
-kubectl apply -n <namespace> -f - <<'EOF'
-apiVersion: llmd.ai/v1alpha1
-kind: VariantAutoscaling
-metadata:
-  name: <model-short-name>-va
-  namespace: <namespace>
-  labels:
-    inference.optimization/acceleratorName: <detected-accelerator>
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: <full-deployment-name>
-  modelID: "<model-id>"
-  variantCost: "<variant_cost>"
-  minReplicas: <min>
-  maxReplicas: <max>
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: <model-short-name>-hpa
-  namespace: <namespace>
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: <full-deployment-name>
-  minReplicas: <min>
-  maxReplicas: <max>
-  metrics:
-  - type: External
-    external:
-      metric:
-        name: wva_desired_replicas
-        selector:
-          matchLabels:
-            variant_name: <model-short-name>-va
-            exported_namespace: <namespace>
-      target:
-        type: AverageValue
-        averageValue: "1"
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: <scale_up_window>
-      policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 15
-    scaleDown:
-      stabilizationWindowSeconds: <scale_down_window>
-      policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 15
-EOF
+skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
+  --mode annotated \
+  --namespace <WVA_NS> \
+  --deployment <full-deployment-name> \
+  --model-id "<model-id>" \
+  --variant-cost "<variant_cost>" \
+  --min-replicas <min> \
+  --max-replicas <max> \
+  --scale-up-window <scale_up_window> \
+  --scale-down-window <scale_down_window>
 ```
 
-**For KEDA backend (ScaledObject):**
+**VA + HPA (Prometheus Adapter backend, VA CRD path):**
 ```bash
-kubectl apply -n <namespace> -f - <<'EOF'
-apiVersion: llmd.ai/v1alpha1
-kind: VariantAutoscaling
-metadata:
-  name: <model-short-name>-va
-  namespace: <namespace>
-  labels:
-    inference.optimization/acceleratorName: <detected-accelerator>
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: <full-deployment-name>
-  modelID: "<model-id>"
-  variantCost: "<variant_cost>"
-  minReplicas: <min>
-  maxReplicas: <max>
----
-apiVersion: keda.sh/v1alpha1
-kind: ScaledObject
-metadata:
-  name: <model-short-name>-scaler
-  namespace: <namespace>
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: <full-deployment-name>
-  pollingInterval: 5
-  cooldownPeriod: 30
-  maxReplicaCount: <max>
-  advanced:
-    horizontalPodAutoscalerConfig:
-      behavior:
-        scaleUp:
-          stabilizationWindowSeconds: <scale_up_window>
-          policies:
-          - type: Pods
-            value: 10
-            periodSeconds: 15
-        scaleDown:
-          stabilizationWindowSeconds: <scale_down_window>
-          policies:
-          - type: Pods
-            value: 10
-            periodSeconds: 15
-  triggers:
-  - type: prometheus
-    name: wva-desired-replicas
-    metadata:
-      serverAddress: <prometheus-url>
-      query: |
-        wva_desired_replicas{
-          variant_name="<model-short-name>-va",
-          exported_namespace="<namespace>"
-        }
-      threshold: '1'
-      activationThreshold: '0'
-      metricType: "AverageValue"
-      unsafeSsl: "true"
-EOF
+skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
+  --mode va-hpa \
+  --namespace <WVA_NS> \
+  --deployment <full-deployment-name> \
+  --model-id "<model-id>" \
+  --variant-cost "<variant_cost>" \
+  --accelerator $ACCELERATOR \
+  --min-replicas <min> \
+  --max-replicas <max> \
+  --scale-up-window <scale_up_window> \
+  --scale-down-window <scale_down_window>
 ```
 
-**Alternative: annotation-based discovery (preferred — no VA CRD required)**
-
-Instead of creating a VariantAutoscaling resource, annotate the HPA (or ScaledObject) directly and WVA will discover it automatically:
-
+**VA + ScaledObject (KEDA backend):**
 ```bash
-kubectl apply -n <namespace> -f - <<'EOF'
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: <model-short-name>-hpa
-  namespace: <namespace>
-  annotations:
-    llm-d.ai/managed: "true"
-    llm-d.ai/model-id: "<model-id>"
-    llm-d.ai/variant-cost: "<variant_cost>"
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: <full-deployment-name>
-  minReplicas: <min>
-  maxReplicas: <max>
-  metrics:
-  - type: External
-    external:
-      metric:
-        name: wva_desired_replicas
-        selector:
-          matchLabels:
-            variant_name: <model-short-name>-hpa
-            exported_namespace: <namespace>
-      target:
-        type: AverageValue
-        averageValue: "1"
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: <scale_up_window>
-      policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 15
-    scaleDown:
-      stabilizationWindowSeconds: <scale_down_window>
-      policies:
-      - type: Pods
-        value: 10
-        periodSeconds: 15
-EOF
+skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
+  --mode keda \
+  --namespace <WVA_NS> \
+  --deployment <full-deployment-name> \
+  --model-id "<model-id>" \
+  --variant-cost "<variant_cost>" \
+  --accelerator $ACCELERATOR \
+  --min-replicas <min> \
+  --max-replicas <max> \
+  --scale-up-window <scale_up_window> \
+  --scale-down-window <scale_down_window> \
+  --prometheus-url <prometheus-url>
 ```
 
-> When using annotation-based HPAs, `variant_name` in the metric selector must match the HPA resource name (not a VA name).
+> `apply-hpa.sh` derives the resource short name by stripping `-decode` from the deployment name. The HPA/VA will be named `<short-name>-hpa` / `<short-name>-va`.
 
 > **Critical**: HPA metric name must be `wva_desired_replicas`. Do NOT use `wva_kv_cache_saturation` or `wva_queue_depth_saturation` — they are not exposed by Prometheus Adapter.
 
-> **`variant_name` must match the VA resource name exactly.**
+> **`variant_name`** must match the resource WVA tracks: VA name (VA-based path) or HPA name (annotated path). `apply-hpa.sh` sets this correctly.
 
 > **`type: AverageValue, averageValue: "1"`**: HPA computes `desiredReplicas = currentReplicas × (metric / 1)` — directly matching WVA's recommendation.
 
@@ -605,42 +455,18 @@ EOF
 **Wait ~2 minutes for Prometheus to scrape metrics, then verify:**
 
 ```bash
-# All VAs
-kubectl get variantautoscaling -n <namespace>
-
-# All HPAs (or ScaledObjects)
-kubectl get hpa -n <namespace>
-# or: kubectl get scaledobject -n <namespace>
+skills/configure-wva-autoscaling-llm-d/scripts/verify-wva.sh <WVA_NS>
 ```
 
-**Compatibility checks for EACH VA+HPA pair:**
-
+If verification is incomplete (VAs not METRICSREADY, HPAs showing `<unknown>`), run the troubleshoot script:
 ```bash
-# VA target matches HPA target?
-kubectl get variantautoscaling -n <namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.scaleTargetRef.name}{"\n"}{end}'
-kubectl get hpa -n <namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.scaleTargetRef.name}{"\n"}{end}'
-
-# HPA metric selector variant_name matches VA name?
-kubectl get hpa -n <namespace> -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.metrics[0].external.metric.selector.matchLabels.variant_name}{"\n"}{end}'
+skills/configure-wva-autoscaling-llm-d/scripts/troubleshoot-scaling.sh <WVA_NS>
 ```
 
-**Success criteria:**
-- All VAs show `METRICSREADY: True`
-- All HPAs show numeric targets (not `<unknown>`) — or ScaledObjects show `READY: True`
-- Each HPA's `variant_name` selector matches its corresponding VA name
-- Each VA and HPA target the same deployment
-- No errors in WVA controller logs
-
-**If METRICSREADY stays False:**
-1. Check logs: `kubectl logs -n <namespace> -l control-plane=controller-manager --tail=50`
-2. `"Skipping status update for VA without accelerator info"` → label missing
-3. Deployment at 0 replicas → scale to 1: `kubectl scale deployment <name> -n <namespace> --replicas=1`
-
-**If HPA shows `<unknown>`:**
-1. Wrong metric name (must be `wva_desired_replicas`)
-2. `variant_name` doesn't match VA name
-3. Missing `exported_namespace` label
-4. Prometheus Adapter not running
+**Common causes:**
+- `METRICSREADY: False` → accelerator label missing on deployment or VA (re-run Step 4d)
+- HPA `<unknown>` → wrong metric name, `variant_name` mismatch, or Prometheus Adapter not running
+- Deployment at 0 replicas → `kubectl scale deployment <name> -n <WVA_NS> --replicas=1`
 
 **STOP. Report final status for each model:**
 ```
