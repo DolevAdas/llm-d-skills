@@ -21,6 +21,8 @@ description: Configure and deploy Workload Variant Autoscaler (WVA) for llm-d in
 > "Which Kubernetes namespace should WVA monitor?"
 > (Provide a single namespace, e.g., `my-llm-ns`)
 
+Store the answer as `WVA_NS` — it will be used throughout deployment. WVA will be deployed **into** this namespace so it can watch the llm-d workloads there.
+
 Then discover ALL llm-d deployments in that namespace:
 
 ```bash
@@ -223,12 +225,12 @@ Write a concise plan and display it to the user.
 ### 3c. Execution Steps
 
 ```
-Step 4a: Pre-flight checks (existing releases, KEDA availability)
-Step 4b: Deploy WVA controller + first model VA + HPA via Makefile
+Step 4a: Pre-flight checks (existing controller, KEDA availability)
+Step 4b: Deploy WVA controller + monitoring + scaler backend via Makefile (Kustomize)
 Step 4c: Verify controller running and watching namespace
 Step 4d: Add accelerator labels to all target deployments
-Step 4e: Apply VA + HPA for additional models via kubectl apply
-Step 4f: Verify ALL VAs show METRICSREADY: True and ALL HPAs have valid targets
+Step 4e: Apply VA + HPA (or annotated HPA) for ALL models via kubectl apply
+Step 4f: Verify ALL VAs/HPAs are ready and have valid targets
 Step 5:  Generate reusable deployment script
 ```
 
@@ -236,8 +238,9 @@ Step 5:  Generate reusable deployment script
 
 | Resource | Link / Command |
 |----------|---------------|
-| WVA User Guide | `${WVA_REPO_PATH}/docs/` |
-| Helm Values | `${WVA_REPO_PATH}/charts/workload-variant-autoscaler/values.yaml` |
+| WVA User Guide | `${WVA_REPO_PATH}/deploy/README.md` |
+| Kustomize overlays | `${WVA_REPO_PATH}/config/default/` (k8s), `config/openshift/` (OCP) |
+| HPA annotation samples | `${WVA_REPO_PATH}/config/samples/hpa/annotations/` |
 | Troubleshooting | [Troubleshooting.md](./Troubleshooting.md) |
 | WVA GitHub | https://github.com/llm-d/llm-d-workload-variant-autoscaler |
 
@@ -254,8 +257,9 @@ Execute each sub-step one at a time, verifying after each.
 ### 4a. Pre-flight Checks
 
 ```bash
-# Check for existing WVA release
-helm list -n <namespace> | grep workload-variant-autoscaler
+# Check for existing WVA controller deployment (WVA_NS = namespace from Step 1)
+kubectl get deployment workload-variant-autoscaler-controller-manager \
+  -n <WVA_NS> 2>/dev/null
 
 # Check scaler backend availability
 kubectl get apiservice v1beta1.external.metrics.k8s.io 2>/dev/null | grep -o 'True\|False'
@@ -263,32 +267,33 @@ kubectl get apiservice v1beta1.external.metrics.k8s.io 2>/dev/null | grep -o 'Tr
 kubectl get deployment keda-operator -A 2>/dev/null
 ```
 
-If a stale release exists, inform the user and ask permission to remove:
+If a stale WVA controller exists, inform the user and ask permission to remove:
 ```bash
-helm uninstall workload-variant-autoscaler -n <namespace>
+cd <WVA_REPO_PATH>
+WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
+# or: make undeploy-wva-on-k8s
 ```
 
 **STOP. Ask:** "Pre-flight checks complete. Ready to deploy WVA controller via Makefile? (yes/no)"
 
 ---
 
-### 4b. Deploy Controller + First Model (Makefile)
+### 4b. Deploy WVA Controller (Makefile + Kustomize)
 
-Use the appropriate Makefile target. The Makefile target calls `deploy/install.sh` (WVA controller + monitoring + scaler backend) followed by `deploy/install-llmd-infra.sh` (llm-d infrastructure). VA and HPA for the first model are deployed by default via the Helm chart (`va.enabled: true`, `hpa.enabled: true`).
+`deploy/install.sh` deploys the WVA controller via Kustomize, plus Prometheus monitoring and the scaler backend. **It does NOT create VariantAutoscaling or HPA resources** — those are applied in step 4e for all deployments.
 
-The Makefile only propagates `NAMESPACE`, `IMG`, `ENVIRONMENT`, and `LLM_D_RELEASE` to the scripts. All other configuration must be `export`ed as environment variables **before** calling `make`.
+All configuration must be `export`ed as environment variables **before** calling `make` (or pass them inline). The Makefile passes `NAMESPACE` to the scripts while `deploy/install.sh` reads `WVA_NS` — set both to the same value until this inconsistency is resolved in the Makefile.
 
 **Kubernetes:**
 ```bash
 cd <WVA_REPO_PATH>
 
-export NAMESPACE=<namespace>
-export LLMD_NS=<namespace>
+# WVA_NS was captured in Step 1 — WVA runs in the same namespace as llm-d so it can watch workloads
+export WVA_NS=<namespace-from-step-1>
+export NAMESPACE=$WVA_NS          # workaround: Makefile passes NAMESPACE; install.sh reads WVA_NS
+export LLMD_NS=$WVA_NS
 export NAMESPACE_SCOPED=true
 export SCALER_BACKEND=<prometheus-adapter|keda>
-export MODEL_ID="<model-id>"
-export LLM_D_MODELSERVICE_NAME=<first-deployment-without-decode-suffix>
-export SKIP_TLS_VERIFY=false
 export DEPLOY_LWS=false          # set false if LWS already installed
 export DEPLOY_PROMETHEUS=true    # set false if Prometheus already installed
 export DEPLOY_WVA=true
@@ -301,12 +306,11 @@ make deploy-wva-on-k8s IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:lates
 ```bash
 cd <WVA_REPO_PATH>
 
-export NAMESPACE=<namespace>
-export LLMD_NS=<namespace>
+export WVA_NS=<namespace-from-step-1>
+export NAMESPACE=$WVA_NS          # workaround: Makefile passes NAMESPACE; install.sh reads WVA_NS
+export LLMD_NS=$WVA_NS
 export NAMESPACE_SCOPED=true
 export SCALER_BACKEND=prometheus-adapter
-export MODEL_ID="<model-id>"
-export LLM_D_MODELSERVICE_NAME=<first-deployment-without-decode-suffix>
 export MONITORING_NAMESPACE=<openshift-user-workload-monitoring|openshift-monitoring>
 export SKIP_TLS_VERIFY=true
 
@@ -314,18 +318,10 @@ INSTALL_GATEWAY_CTRLPLANE=false \
 make deploy-wva-on-openshift IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
 ```
 
-**To customise thresholds and HPA settings**, run a `helm upgrade` after the initial deploy (or pass a custom `VALUES_FILE`):
+**To customise thresholds**, edit the ConfigMap after deploy (takes effect without restart):
 ```bash
-helm upgrade workload-variant-autoscaler <WVA_REPO_PATH>/charts/workload-variant-autoscaler \
-  -n workload-variant-autoscaler-system --reuse-values \
-  --set wva.capacityScaling.default.kvCacheThreshold=<kv_cache_threshold> \
-  --set wva.capacityScaling.default.queueLengthThreshold=<queue_length_threshold> \
-  --set wva.capacityScaling.default.kvSpareTrigger=<kv_spare_trigger> \
-  --set wva.capacityScaling.default.queueSpareTrigger=<queue_spare_trigger> \
-  --set hpa.minReplicas=<min_replicas> \
-  --set hpa.maxReplicas=<max_replicas> \
-  --set hpa.behavior.scaleUp.stabilizationWindowSeconds=<scale_up_window> \
-  --set hpa.behavior.scaleDown.stabilizationWindowSeconds=<scale_down_window>
+kubectl edit configmap workload-variant-autoscaler-wva-saturation-scaling-config \
+  -n <WVA_NS>
 ```
 
 > **`LLM_D_MODELSERVICE_NAME`**: Used by `install-llmd-infra.sh` as the base name for the llm-d ModelService. The deploy scripts append `-decode` for the Deployment name. Set it **without** the `-decode` suffix. Example: deployment `my-model-decode` → `LLM_D_MODELSERVICE_NAME=my-model`.
@@ -337,19 +333,22 @@ helm upgrade workload-variant-autoscaler <WVA_REPO_PATH>/charts/workload-variant
 > **`MONITORING_NAMESPACE`**: Check with: `kubectl get apiservice v1beta1.external.metrics.k8s.io -o jsonpath='{.spec.service.namespace}'`
 
 **What the Makefile creates:**
-- Per-namespace: `workload-variant-autoscaler-controller-manager` (WVA controller)
-- Per-model (first only): `workload-variant-autoscaler-va` (VariantAutoscaling) + `workload-variant-autoscaler-hpa` (HPA) or ScaledObject
+- WVA controller Deployment via Kustomize (`config/default` or `config/openshift`)
+- Prometheus monitoring stack (if `DEPLOY_PROMETHEUS=true`)
+- Scaler backend — Prometheus Adapter (HPA) or KEDA
+- llm-d infrastructure via `install-llmd-infra.sh` (gateway, EPP, ModelService)
+- **No VariantAutoscaling or HPA resources** — apply those in step 4e
 
 ---
 
 ### 4c. Verify Controller
 
 ```bash
-kubectl get deployment workload-variant-autoscaler-controller-manager -n <namespace>
-kubectl logs -n <namespace> -l control-plane=controller-manager --tail=20 | grep -i "watching"
+kubectl get deployment workload-variant-autoscaler-controller-manager -n <WVA_NS>
+kubectl logs -n <WVA_NS> -l control-plane=controller-manager --tail=20 | grep -i "watching"
 ```
 
-Expected: controller Running, logs show `"Watching single namespace: <namespace>"`
+Expected: controller Running, logs show `"Watching single namespace: <WVA_NS>"`
 
 **STOP. Report and ask:** "Controller deployed. Proceed to add accelerator labels? (yes/no)"
 
@@ -407,9 +406,13 @@ kubectl patch variantautoscaling workload-variant-autoscaler-va -n <namespace> -
 
 ---
 
-### 4e. Apply VA + HPA for Additional Models
+### 4e. Apply VA + HPA for All Models
 
-For each additional deployment (beyond the first), apply a VariantAutoscaling + HPA pair. The controller from 4b picks them up automatically.
+> **Note:** The VariantAutoscaling CRD is deprecated. The preferred approach is to annotate your HPA or ScaledObject directly (see annotation-based alternative below). The VA CRD path still works during the deprecation period.
+
+Apply a VariantAutoscaling + HPA (or annotated HPA) for **every** selected deployment — the `install.sh` from step 4b does not create any VA or HPA resources.
+
+> **Namespace scope**: With `NAMESPACE_SCOPED=true` the controller watches only the namespace where it runs (`WVA_NS`). Deploy VAs and HPAs to that **same** namespace, or set `NAMESPACE_SCOPED=false` to watch all namespaces.
 
 **For HPA backend (uses `SCALER_BACKEND=prometheus-adapter`):**
 ```bash
@@ -535,6 +538,58 @@ spec:
       unsafeSsl: "true"
 EOF
 ```
+
+**Alternative: annotation-based discovery (preferred — no VA CRD required)**
+
+Instead of creating a VariantAutoscaling resource, annotate the HPA (or ScaledObject) directly and WVA will discover it automatically:
+
+```bash
+kubectl apply -n <namespace> -f - <<'EOF'
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: <model-short-name>-hpa
+  namespace: <namespace>
+  annotations:
+    llm-d.ai/managed: "true"
+    llm-d.ai/model-id: "<model-id>"
+    llm-d.ai/variant-cost: "<variant_cost>"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: <full-deployment-name>
+  minReplicas: <min>
+  maxReplicas: <max>
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: wva_desired_replicas
+        selector:
+          matchLabels:
+            variant_name: <model-short-name>-hpa
+            exported_namespace: <namespace>
+      target:
+        type: AverageValue
+        averageValue: "1"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: <scale_up_window>
+      policies:
+      - type: Pods
+        value: 10
+        periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: <scale_down_window>
+      policies:
+      - type: Pods
+        value: 10
+        periodSeconds: 15
+EOF
+```
+
+> When using annotation-based HPAs, `variant_name` in the metric selector must match the HPA resource name (not a VA name).
 
 > **Critical**: HPA metric name must be `wva_desired_replicas`. Do NOT use `wva_kv_cache_saturation` or `wva_queue_depth_saturation` — they are not exposed by Prometheus Adapter.
 
@@ -709,7 +764,7 @@ Commands:
   Redeploy:  ./scripts/deploy-wva-<namespace>.sh
   Verify:    ./scripts/verify-wva.sh <namespace>
   Test:      ./scripts/test-wva-scaling.sh <namespace> <deployment>
-  Undeploy:  helm uninstall workload-variant-autoscaler -n <namespace>
+  Undeploy:  cd <WVA_REPO_PATH> && WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
 ============================================
 ```
 
@@ -767,23 +822,25 @@ The `deploy-wva-on-k8s` / `deploy-wva-on-openshift` Makefile targets only propag
 | `ACCELERATOR_TYPE` | GPU vendor label (`nvidia`, `amd`, `cpu`) — auto-detected if unset | `H100` |
 | `INSTALL_GATEWAY_CTRLPLANE` | Install gateway control plane | `true` — set `false` if already installed |
 
-#### Helm chart values (set via `helm upgrade --set` after deploy, or in `VALUES_FILE`)
+#### Threshold tuning (ConfigMap — live, no restart required)
 
-| Helm value | Description | Default |
-|------------|-------------|---------|
-| `wva.capacityScaling.default.kvCacheThreshold` | KV cache saturation threshold | `0.80` |
-| `wva.capacityScaling.default.queueLengthThreshold` | Queue depth saturation threshold | `5` |
-| `wva.capacityScaling.default.kvSpareTrigger` | Proactive spare KV trigger | `0.10` |
-| `wva.capacityScaling.default.queueSpareTrigger` | Proactive spare queue trigger | `3` |
-| `hpa.minReplicas` | Minimum replicas | `1` |
-| `hpa.maxReplicas` | Maximum replicas | `2` |
-| `hpa.behavior.scaleUp.stabilizationWindowSeconds` | Scale-up stabilization window | `240` |
-| `hpa.behavior.scaleDown.stabilizationWindowSeconds` | Scale-down stabilization window | `240` |
-| `va.accelerator` | GPU vendor label (fallback if auto-detect fails) | `H100` |
-| `va.variantCost` | Cost weight string | `"10.0"` |
-| `llmd.namespace` | Namespace WVA targets for VA/HPA | `llm-d-autoscaler` |
-| `llmd.modelName` | Deployment base name (without `-decode`) | `ms-workload-autoscaler-llm-d-modelservice` |
-| `llmd.modelID` | Model identifier for VA spec | `Qwen/Qwen3-0.6B` |
+Saturation thresholds live in the `wva-saturation-scaling-config` ConfigMap. Edit them directly:
+
+```bash
+kubectl edit configmap workload-variant-autoscaler-wva-saturation-scaling-config \
+  -n <WVA_NS>
+```
+
+| ConfigMap key | Description | Default |
+|---------------|-------------|---------|
+| `kvCacheThreshold` | KV cache saturation threshold | `0.80` |
+| `queueLengthThreshold` | Queue depth saturation threshold | `5` |
+| `kvSpareTrigger` | Proactive spare KV trigger | `0.10` |
+| `queueSpareTrigger` | Proactive spare queue trigger | `3` |
+
+HPA behavior (stabilization windows, min/max replicas) is set per-HPA resource — patch or re-apply the HPA manifest.
+
+> **Helm chart is deprecated.** Do not use `helm upgrade --set` to tune thresholds. The chart will be removed in a future release.
 
 ### ConfigMap Live Tuning
 
@@ -817,7 +874,14 @@ After changing thresholds: `kubectl rollout restart deployment/<epp-deployment> 
 ### Undeploy
 
 ```bash
-helm uninstall workload-variant-autoscaler -n <namespace>
+cd <WVA_REPO_PATH>
+WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
+# or: make undeploy-wva-on-k8s
+```
+
+Also delete any VAs, HPAs, or annotated HPAs you created manually:
+```bash
+kubectl delete variantautoscaling,hpa -n <namespace> --all
 ```
 
 ### Known Issues
