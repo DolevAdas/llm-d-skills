@@ -320,11 +320,11 @@ make deploy-wva-on-openshift IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler
 
 **To customise thresholds**, edit the ConfigMap after deploy (takes effect without restart):
 ```bash
-kubectl edit configmap workload-variant-autoscaler-wva-saturation-scaling-config \
+kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config \
   -n <WVA_NS>
 ```
 
-> **`LLM_D_MODELSERVICE_NAME`**: Used by `install-llmd-infra.sh` as the base name for the llm-d ModelService. The deploy scripts append `-decode` for the Deployment name. Set it **without** the `-decode` suffix. Example: deployment `my-model-decode` → `LLM_D_MODELSERVICE_NAME=my-model`.
+> **`LLM_D_MODELSERVICE_NAME`**: Used by `install-llmd-infra.sh` as the deployment name — the script uses it as-is. Default: `<GUIDE_NAME>-nvidia-gpu-vllm-decode`. Override when your deployment has a different name.
 
 > **OpenShift `INSTALL_GATEWAY_CTRLPLANE=false`**: Skips gateway control plane installation (defaults to `true`). Set to `false` when the gateway control plane is already installed.
 
@@ -348,7 +348,7 @@ kubectl get deployment workload-variant-autoscaler-controller-manager -n <WVA_NS
 kubectl logs -n <WVA_NS> -l control-plane=controller-manager --tail=20 | grep -i "watching"
 ```
 
-Expected: controller Running, logs show `"Watching single namespace: <WVA_NS>"`
+Expected: controller Running, logs contain `"Watching single namespace"` with `"namespace":"<WVA_NS>"` (structured JSON log).
 
 **STOP. Report and ask:** "Controller deployed. Proceed to add accelerator labels? (yes/no)"
 
@@ -396,11 +396,12 @@ kubectl get deployment -n <namespace> \
   -o custom-columns=NAME:.metadata.name,ACCELERATOR:.metadata.labels."inference\.optimization/acceleratorName"
 ```
 
-Also patch the first model's VA if the Helm chart set the wrong label (known OpenShift issue — chart hardcodes `H100` regardless of `ACCELERATOR_TYPE`):
+If using the VA-based path (not annotation-based), also check and correct the accelerator label on the VA:
 ```bash
+# VA-based path only — skip if using annotation-based HPAs (no VA CRD exists)
 kubectl get variantautoscaling -n <namespace> -o jsonpath='{.items[0].metadata.labels.inference\.optimization/acceleratorName}'
 # If the value is a GPU model name (e.g., "H100") instead of the vendor (e.g., "nvidia"), patch it:
-kubectl patch variantautoscaling workload-variant-autoscaler-va -n <namespace> --type=merge \
+kubectl patch variantautoscaling <va-name> -n <namespace> --type=merge \
   -p '{"metadata":{"labels":{"inference.optimization/acceleratorName":"<detected-accelerator>"}}}'
 ```
 
@@ -802,9 +803,9 @@ The `deploy-wva-on-k8s` / `deploy-wva-on-openshift` Makefile targets only propag
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `IMG` | WVA container image (also a Make arg) | `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` |
-| `NAMESPACE` | WVA controller namespace (also a Make arg) | `workload-variant-autoscaler-system` |
+| `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` — set to llm-d namespace (Step 1) |
 | `LLMD_NS` | Namespace where llm-d runs | `llm-d-inference-scheduler` |
-| `NAMESPACE_SCOPED` | Limit WVA to single namespace | `true` — **keep `true` for production** |
+| `NAMESPACE_SCOPED` | Limit WVA to single namespace | `false` — set `true` for production (watches only `WVA_NS`) |
 | `DEPLOY_WVA` | Deploy WVA controller | `true` |
 | `DEPLOY_LWS` | Deploy LeaderWorkerSet | `true` — set `false` if already installed |
 | `DEPLOY_PROMETHEUS` | Deploy kube-prometheus-stack | `true` — set `false` if already installed |
@@ -827,7 +828,7 @@ The `deploy-wva-on-k8s` / `deploy-wva-on-openshift` Makefile targets only propag
 Saturation thresholds live in the `wva-saturation-scaling-config` ConfigMap. Edit them directly:
 
 ```bash
-kubectl edit configmap workload-variant-autoscaler-wva-saturation-scaling-config \
+kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config \
   -n <WVA_NS>
 ```
 
@@ -847,17 +848,21 @@ HPA behavior (stabilization windows, min/max replicas) is set per-HPA resource �
 Saturation thresholds live in ConfigMap `wva-saturation-scaling-config`. Changes take effect without controller restart:
 
 ```bash
-kubectl edit configmap workload-variant-autoscaler-wva-saturation-scaling-config -n <namespace>
+kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config -n <namespace>
 ```
 
 ### Asymmetric Stabilization Windows (post-deploy)
 
-The Makefile sets symmetric windows. For different up/down values:
+Patch the HPA you created in Step 4e directly:
 ```bash
-helm upgrade workload-variant-autoscaler <WVA_REPO_PATH>/charts/workload-variant-autoscaler \
-  -n <namespace> --reuse-values \
-  --set hpa.behavior.scaleUp.stabilizationWindowSeconds=60 \
-  --set hpa.behavior.scaleDown.stabilizationWindowSeconds=300
+kubectl patch hpa <hpa-name> -n <WVA_NS> --type=merge -p '{
+  "spec": {
+    "behavior": {
+      "scaleUp":   {"stabilizationWindowSeconds": 60},
+      "scaleDown": {"stabilizationWindowSeconds": 300}
+    }
+  }
+}'
 ```
 
 ### EPP Threshold Alignment
