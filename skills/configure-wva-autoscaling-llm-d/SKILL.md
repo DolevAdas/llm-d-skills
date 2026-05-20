@@ -264,7 +264,7 @@ cd skills/configure-wva-autoscaling-llm-d/scripts/
 If a stale WVA controller is found, ask permission to remove:
 ```bash
 cd <WVA_REPO_PATH>
-WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
+WVA_NS=<WVA_NS> ./deploy/install.sh --undeploy
 ```
 
 **STOP. Ask:** "Pre-flight checks complete. Ready to deploy WVA controller via Makefile? (yes/no)"
@@ -275,7 +275,7 @@ WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
 
 `deploy/install.sh` deploys the WVA controller via Kustomize, plus Prometheus monitoring and the scaler backend. **It does NOT create VariantAutoscaling or HPA resources** — those are applied in step 4e for all deployments.
 
-All configuration must be `export`ed as environment variables **before** calling `make` (or pass them inline). The Makefile passes `NAMESPACE` to the scripts while `deploy/install.sh` reads `WVA_NS` — set both to the same value until this inconsistency is resolved in the Makefile.
+All configuration must be `export`ed as environment variables **before** calling `make` (or pass them inline).
 
 **Kubernetes:**
 ```bash
@@ -283,10 +283,10 @@ cd <WVA_REPO_PATH>
 
 # WVA_NS was captured in Step 1 — WVA runs in the same namespace as llm-d so it can watch workloads
 export WVA_NS=<namespace-from-step-1>
-export NAMESPACE=$WVA_NS          # workaround: Makefile passes NAMESPACE; install.sh reads WVA_NS
 export LLMD_NS=$WVA_NS
 export NAMESPACE_SCOPED=true
 export SCALER_BACKEND=<prometheus-adapter|keda>
+export DEPLOY_LLM_D_INFRA=false        # skip llm-d deployment (already deployed, avoids HF_TOKEN requirement)
 export DEPLOY_LWS=false          # set false if LWS already installed
 export DEPLOY_PROMETHEUS=true    # set false if Prometheus already installed
 export DEPLOY_WVA=true
@@ -300,10 +300,10 @@ make deploy-wva-on-k8s IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:lates
 cd <WVA_REPO_PATH>
 
 export WVA_NS=<namespace-from-step-1>
-export NAMESPACE=$WVA_NS          # workaround: Makefile passes NAMESPACE; install.sh reads WVA_NS
 export LLMD_NS=$WVA_NS
 export NAMESPACE_SCOPED=true
 export SCALER_BACKEND=prometheus-adapter
+export DEPLOY_LLM_D_INFRA=false        # skip llm-d deployment (already deployed, avoids HF_TOKEN requirement)
 export MONITORING_NAMESPACE=<openshift-user-workload-monitoring|openshift-monitoring>
 export SKIP_TLS_VERIFY=true
 
@@ -591,7 +591,7 @@ Commands:
   Redeploy:  ./scripts/deploy-wva-<namespace>.sh
   Verify:    ./scripts/verify-wva.sh <namespace>
   Test:      ./scripts/test-wva-scaling.sh <namespace> <deployment>
-  Undeploy:  cd <WVA_REPO_PATH> && WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
+  Undeploy:  cd <WVA_REPO_PATH> && WVA_NS=<WVA_NS> ./deploy/install.sh --undeploy
 ============================================
 ```
 
@@ -622,7 +622,7 @@ These must ALL be true for WVA to work:
 
 ### Environment Variables and Helm Values Quick Reference
 
-The `deploy-wva-on-k8s` / `deploy-wva-on-openshift` Makefile targets only propagate `NAMESPACE`, `IMG`, `ENVIRONMENT`, and `LLM_D_RELEASE` directly. Everything else must be **`export`ed** before calling `make`, or set via `helm upgrade --set` for chart-level values.
+Everything must be **`export`ed** before calling `make`, or passed inline on the `make` command.
 
 #### Env vars for `deploy/install.sh` (export before `make`)
 
@@ -632,6 +632,7 @@ The `deploy-wva-on-k8s` / `deploy-wva-on-openshift` Makefile targets only propag
 | `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` — set to llm-d namespace (Step 1) |
 | `LLMD_NS` | Namespace where llm-d runs | `llm-d-inference-scheduler` |
 | `NAMESPACE_SCOPED` | Limit WVA to single namespace | `false` — set `true` for production (watches only `WVA_NS`) |
+| `DEPLOY_LLM_D_INFRA` | Deploy llm-d infrastructure | `true` — set `false` to skip (avoids HF_TOKEN requirement when llm-d is already deployed) |
 | `DEPLOY_WVA` | Deploy WVA controller | `true` |
 | `DEPLOY_LWS` | Deploy LeaderWorkerSet | `true` — set `false` if already installed |
 | `DEPLOY_PROMETHEUS` | Deploy kube-prometheus-stack | `true` — set `false` if already installed |
@@ -706,7 +707,7 @@ After changing thresholds: `kubectl rollout restart deployment/<epp-deployment> 
 
 ```bash
 cd <WVA_REPO_PATH>
-WVA_NS=<WVA_NS> NAMESPACE=<WVA_NS> ./deploy/install.sh --undeploy
+WVA_NS=<WVA_NS> ./deploy/install.sh --undeploy
 # or: make undeploy-wva-on-k8s
 ```
 

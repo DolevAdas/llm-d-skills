@@ -619,13 +619,12 @@ With `NAMESPACE_SCOPED=true`, WVA uses `--watch-namespace=$(POD_NAMESPACE)` wher
 ```bash
 # Set WVA_NS to your llm-d workload namespace
 export WVA_NS=<your-llm-d-namespace>
-export NAMESPACE=$WVA_NS   # required — Makefile passes NAMESPACE to scripts
 
 # Deploy WVA into the target namespace
 make -C ${WVA_REPO_PATH} deploy-wva-on-k8s \
   WVA_NS=$WVA_NS \
-  NAMESPACE=$WVA_NS \
   NAMESPACE_SCOPED=true \
+  DEPLOY_LLM_D_INFRA=false \
   PROMETHEUS_URL=<prometheus-url> \
   PROMETHEUS_INSECURE_SKIP_VERIFY=true
 ```
@@ -642,14 +641,13 @@ kubectl logs -n <WVA_NS> \
 
 ```bash
 # Undeploy from wrong namespace
-WVA_NS=<wrong-namespace> NAMESPACE=<wrong-namespace> \
-  ${WVA_REPO_PATH}/deploy/install.sh --undeploy
+WVA_NS=<wrong-namespace> ${WVA_REPO_PATH}/deploy/install.sh --undeploy
 
 # Redeploy into correct namespace
 make -C ${WVA_REPO_PATH} deploy-wva-on-k8s \
   WVA_NS=<correct-namespace> \
-  NAMESPACE=<correct-namespace> \
   NAMESPACE_SCOPED=true \
+  DEPLOY_LLM_D_INFRA=false \
   PROMETHEUS_URL=<prometheus-url>
 ```
 
