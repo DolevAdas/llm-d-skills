@@ -210,6 +210,64 @@
 - **When to worry**: If stuck for >15 minutes with no progress
 - **Check**: Network bandwidth to HuggingFace, disk I/O performance
 
+**Pods stuck at startup with "unauthenticated requests to HF Hub":**
+- **Problem**: All decoder pods stall during model download with "unauthenticated requests to HF Hub" as the last log line, remaining not ready for extended periods (30+ minutes)
+- **Root Cause**: Missing `HF_TOKEN` environment variable in kustomize patches - pods attempt to download models unauthenticated and get rate-limited by HuggingFace Hub
+- **Symptoms**:
+  - Pods stuck in `ContainerCreating` or `Running` but not `Ready` for 30+ minutes
+  - Last log line shows: "unauthenticated requests to HF Hub"
+  - Model download makes no progress or is extremely slow (3.5+ hours for large models)
+  - Only affects pods on nodes without cached model weights
+  - Multiple pods (e.g., 7/8) stalled at the same point
+- **Diagnosis**:
+  ```bash
+  # Check pod status and age
+  kubectl get pods -n ${NAMESPACE} -l llm-d.ai/role=decode
+  
+  # Check recent logs for authentication issues
+  kubectl logs <pod-name> -n ${NAMESPACE} --tail=50 | grep -i "unauthenticated\|HF\|token"
+  
+  # Verify HF_TOKEN is set in pod spec
+  kubectl get pod <pod-name> -n ${NAMESPACE} -o yaml | grep -A 5 "HF_TOKEN"
+  ```
+- **Solution**: Add the `HF_TOKEN` environment variable to your kustomize patch file:
+  ```yaml
+  apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: decode
+  spec:
+    template:
+      spec:
+        containers:
+          - name: modelserver
+            env:
+              - name: HF_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: llm-d-hf-token
+                    key: HF_TOKEN
+  ```
+- **Fix for running deployment**:
+  ```bash
+  # 1. Update your kustomize patch to include HF_TOKEN
+  # 2. Apply the updated configuration
+  kustomize build <path-to-overlay> | kubectl apply -n ${NAMESPACE} -f -
+  
+  # 3. Trigger rolling update by deleting pods (they'll restart with new config)
+  kubectl delete pods -l llm-d.ai/role=decode -n ${NAMESPACE}
+  
+  # 4. Monitor progress - pods should now authenticate and download faster
+  kubectl get pods -n ${NAMESPACE} -l llm-d.ai/role=decode -w
+  ```
+- **Prevention**:
+  - Always verify `HF_TOKEN` is present in patch files before deployment
+  - The HPU patch (`guides/optimized-baseline/modelserver/hpu/vllm/patch-vllm.yaml`) includes this correctly (lines 23-27)
+  - The GPU base patch (`guides/optimized-baseline/modelserver/gpu/vllm/base/patch-vllm.yaml`) is missing this - add it manually
+  - Ensure the `llm-d-hf-token` secret exists in your namespace before deploying
+- **Note**: Without authentication, HuggingFace Hub severely rate-limits downloads, making large model downloads (e.g., Qwen3-32B) take 3.5+ hours instead of minutes. With proper authentication, downloads complete in 5-15 minutes depending on model size and network speed.
+
+
 ### Networking and Routing Issues
 
 **Routing not working:**
