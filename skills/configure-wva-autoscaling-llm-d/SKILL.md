@@ -1,13 +1,13 @@
 ---
 name: configure-wva-autoscaling-llm-d
-description: Configure and deploy Workload Variant Autoscaler (WVA) for llm-d inference deployments. Guides users through namespace selection, configuration (with presets or custom values), deployment via Makefile + kubectl apply, and verification. Produces a reusable deployment script.
+description: Configure and deploy Workload Variant Autoscaler (WVA) for llm-d inference deployments. Guides users through namespace selection, WVA repo location, configuration (with presets or custom values), deployment via Makefile + kubectl apply, and verification. Produces a reusable deployment script.
 ---
 
 ## Agent Behavior Rules
 
 1. **Follow steps IN ORDER. Never skip or combine steps.**
 2. **STOP after each step and ask for explicit permission to proceed to the next step.**
-3. **Do NOT modify existing repository code.** Cloning a missing repo is allowed.
+3. **Do NOT modify existing repository code.** Cloning a missing repo is allowed. Exception: the kustomize symlink fix in Step 4b is a known bug fix — apply it if needed.
 4. **Use existing skill scripts when possible** — see [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md).
 5. **Before creating any Kubernetes resource**, state what will be created and why.
 6. **After each kubectl/helm/make command**, run a verification check and report the result before continuing.
@@ -21,23 +21,28 @@ description: Configure and deploy Workload Variant Autoscaler (WVA) for llm-d in
 > "Which Kubernetes namespace should WVA monitor?"
 > (Provide a single namespace, e.g., `my-llm-ns`)
 
-Export the answer in `WVA_NS` environment variable  — it will be used throughout deployment. WVA will be deployed **into** this namespace so it can watch the llm-d workloads there.
+Export the answer:
+```bash
+export WVA_NS=<namespace>
+```
 
-Then discover ALL llm-d deployments in that namespace:
+WVA will be deployed **into** this namespace so it can watch the llm-d workloads there.
+
+Then discover ALL llm-d decode deployments in that namespace:
 
 ```bash
-kubectl get deployment -n <namespace> -l llm-d.ai/role=decode -o custom-columns=NAME:.metadata.name,MODEL:.metadata.labels.llm-d\.ai/model-id,REPLICAS:.spec.replicas
+kubectl get deployment -n $WVA_NS -l llm-d.ai/role=decode -o custom-columns=NAME:.metadata.name,MODEL:.metadata.labels.llm-d\.ai/model-id,REPLICAS:.spec.replicas
 ```
 
 If no results, try the alternative label:
 ```bash
-kubectl get deployment -n <namespace> -l app.kubernetes.io/part-of=llm-d -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas
+kubectl get deployment -n $WVA_NS -l app.kubernetes.io/part-of=llm-d -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas
 ```
 
 Present ALL findings:
 ```
 Namespace: my-llm-ns
-Found 3 llm-d deployments:
+Found 3 llm-d decode deployments:
   1. optimized-baseline-nvidia-gpu-vllm-decode  (model: Qwen/Qwen3-32B, replicas: 1)
   2. ms-gpt-oss-6b-llm-d-modelservice-decode    (model: EleutherAI/gpt-j-6b, replicas: 1)
   3. llama-70b-h100-decode                       (model: meta/llama-3.1-70b, replicas: 2)
@@ -45,7 +50,33 @@ Found 3 llm-d deployments:
 
 **STOP. Ask:** "Which deployment(s) should WVA autoscale? (Enter numbers, names, or 'all')"
 
-Wait for user response. The FIRST deployment selected will be deployed via Makefile (creates the controller + VA + HPA). Additional deployments get VA + HPA via `kubectl apply`.
+---
+
+## Step 1b — WVA Repository Location
+
+**Ask the user:**
+
+> "Where is your `llm-d-workload-variant-autoscaler` repository cloned locally? (e.g. `/home/user/dev/llm-d-workload-variant-autoscaler`)"
+
+If the user provides a path, verify it exists:
+```bash
+ls <provided-path>/deploy/install.sh 2>/dev/null && echo "Found" || echo "Not found"
+```
+
+If the path is valid, export it:
+```bash
+export WVA_REPO_PATH=<provided-path>
+```
+
+If the path is not found or the user does not have a clone, offer to clone it:
+> "I can clone the repository for you. Where should I clone it? (default: `~/dev/llm-d-workload-variant-autoscaler`)"
+
+```bash
+git clone https://github.com/llm-d/llm-d-workload-variant-autoscaler <target-path>
+export WVA_REPO_PATH=<target-path>
+```
+
+**`WVA_REPO_PATH` is required for all subsequent steps.**
 
 ---
 
@@ -155,7 +186,7 @@ After gathering values (from any option), save as YAML:
 namespace: my-llm-ns
 platform: kubernetes  # or openshift
 scaler_backend: hpa  # or keda
-wva_repo_path: /path/to/llm-d-workload-variant-autoscaler
+wva_repo_path: $WVA_REPO_PATH  # set from Step 1b
 
 # Shared defaults — applied to all deployments unless overridden per-deployment
 defaults:
@@ -201,7 +232,7 @@ Tell the user: "Configuration saved to `<path>`. You can reload this in future r
 
 Write a concise plan and display it to the user.
 
-### 3a. All Deployments and Models
+### 3a. Selected Deployments and Models
 
 | # | Deployment | Model ID | Accelerator | Min/Max | Cost | Deploy Method |
 |---|-----------|----------|-------------|---------|------|---------------|
@@ -225,13 +256,14 @@ Write a concise plan and display it to the user.
 ### 3c. Execution Steps
 
 ```
-Step 4a: Pre-flight checks (existing controller, KEDA availability)
-Step 4b: Deploy WVA controller + monitoring + scaler backend via Makefile (Kustomize)
-Step 4c: Verify controller running and watching namespace
-Step 4d: Add accelerator labels to all target deployments
-Step 4e: Apply VA + HPA (or annotated HPA) for ALL models via kubectl apply
-Step 4f: Verify ALL VAs/HPAs are ready and have valid targets
-Step 5:  Generate reusable deployment script
+Step 4a:   Pre-flight checks (existing controller, Prometheus Adapter availability)
+Step 4a.5: Detect monitoring namespace (OpenShift only)
+Step 4b:   Deploy WVA controller + Prometheus Adapter via Makefile (Kustomize)
+Step 4c:   Verify controller running and watching namespace
+Step 4d:   Add accelerator labels to selected decode deployments
+Step 4e:   Apply VA + HPA for selected decode deployments via kubectl apply
+Step 4f:   Verify VAs/HPAs are ready and have valid targets
+Step 5:    Generate reusable deployment script
 ```
 
 ### 3d. References
@@ -240,7 +272,6 @@ Step 5:  Generate reusable deployment script
 |----------|---------------|
 | WVA User Guide | `${WVA_REPO_PATH}/deploy/README.md` |
 | Kustomize overlays | `${WVA_REPO_PATH}/config/default/` (k8s), `config/openshift/` (OCP) |
-| HPA annotation samples | `${WVA_REPO_PATH}/config/samples/hpa/annotations/` |
 | Troubleshooting | [Troubleshooting.md](./Troubleshooting.md) |
 | WVA GitHub | https://github.com/llm-d/llm-d-workload-variant-autoscaler |
 
@@ -256,39 +287,103 @@ Execute each sub-step one at a time, verifying after each.
 
 ### 4a. Pre-flight Checks
 
+Before running the checks, explain to the user what will be verified:
+
+> "Running pre-flight checks. This will verify:
+> - **No existing WVA controller** is already running in `$WVA_NS` (to avoid conflicts with a stale deploy)
+> - **Prometheus Adapter** (external metrics API) is available — WVA needs it to expose `wva_desired_replicas` to the HPA
+> - **Cluster connectivity** — confirming `kubectl` can reach the cluster"
+
 ```bash
 cd skills/configure-wva-autoscaling-llm-d/scripts/
-./preflight-check.sh <WVA_NS> --scaler-backend <prometheus-adapter|keda>
+./preflight-check.sh $WVA_NS --scaler-backend <prometheus-adapter|keda>
 ```
 
 If a stale WVA controller is found, ask permission to remove:
 ```bash
-cd <WVA_REPO_PATH>
-WVA_NS=<WVA_NS> ./deploy/install.sh --undeploy
+cd $WVA_REPO_PATH
+WVA_NS=$WVA_NS ./deploy/install.sh --undeploy
 ```
 
-**STOP. Ask:** "Pre-flight checks complete. Ready to deploy WVA controller via Makefile? (yes/no)"
+**STOP. Ask:** "Pre-flight checks complete. Ready to proceed? (yes/no)"
+
+---
+
+### 4a.5. Detect Monitoring Namespace (OpenShift only)
+
+If the platform is **OpenShift**, detect the namespace where Prometheus Adapter is registered. This is needed so the Makefile can configure the adapter to scrape the right Prometheus instance:
+
+```bash
+MONITORING_NAMESPACE=$(kubectl get apiservice v1beta1.external.metrics.k8s.io \
+  -o jsonpath='{.spec.service.namespace}' 2>/dev/null)
+export MONITORING_NAMESPACE
+echo "Monitoring namespace: $MONITORING_NAMESPACE"
+```
+
+Expected values: `openshift-user-workload-monitoring` or `openshift-monitoring`.
+
+If the command returns empty, default to `openshift-user-workload-monitoring` and inform the user.
+
+> Skip this step on plain Kubernetes — the Makefile default (`workload-variant-autoscaler-monitoring`) applies there.
 
 ---
 
 ### 4b. Deploy WVA Controller (Makefile + Kustomize)
 
-`deploy/install.sh` deploys the WVA controller via Kustomize, plus Prometheus monitoring and the scaler backend. **It does NOT create VariantAutoscaling or HPA resources** — those are applied in step 4e for all deployments.
+`deploy/install.sh` deploys the WVA controller via Kustomize, plus the scaler backend. **It does NOT create VariantAutoscaling or HPA resources** — those are applied in step 4e for each selected deployment.
 
-All configuration must be `export`ed as environment variables **before** calling `make` (or pass them inline).
+#### Pre-check: Go in PATH
+
+The Makefile downloads `controller-gen` and `kustomize` using Go. Verify Go is accessible:
+
+```bash
+which go || echo "not found"
+```
+
+If `go` is not found in PATH, search common locations:
+```bash
+GO_BIN=$(find /opt/homebrew/bin /usr/local/go/bin /usr/bin -name go -type f 2>/dev/null | head -1)
+if [ -n "$GO_BIN" ]; then
+  export PATH="$(dirname $GO_BIN):$PATH"
+  echo "Added Go to PATH: $GO_BIN"
+fi
+```
+
+If Go still cannot be found, **stop and ask the user**:
+> "Go is required by the Makefile to download build tools. Please run `which go` in your terminal and share the path so I can add it to the environment."
+
+#### Pre-check: kustomize symlink bug fix
+
+The Makefile uses kustomize v5, which blocks symlinks pointing outside the build root. The `deploy/lib/infra_wva.sh` script uses `ln -s` for the namespace-scoped patch, which triggers this restriction. Apply the fix before running:
+
+```bash
+sed -i 's/ln -s "\$WVA_PROJECT\/config\/manager\/namespace-scoped-patch.yaml"/cp "$WVA_PROJECT\/config\/manager\/namespace-scoped-patch.yaml"/' \
+  $WVA_REPO_PATH/deploy/lib/infra_wva.sh
+```
+
+Or open `$WVA_REPO_PATH/deploy/lib/infra_wva.sh` line ~98 and change:
+```bash
+# Before (broken on kustomize v5):
+ln -s "$WVA_PROJECT/config/manager/namespace-scoped-patch.yaml" "$tmp_overlay/namespace-scoped-patch.yaml"
+# After (fix):
+cp "$WVA_PROJECT/config/manager/namespace-scoped-patch.yaml" "$tmp_overlay/namespace-scoped-patch.yaml"
+```
+
+This fix is tracked upstream. If `$WVA_REPO_PATH` already has it applied (check with `grep "cp.*namespace-scoped" $WVA_REPO_PATH/deploy/lib/infra_wva.sh`), skip this step.
+
+All configuration must be `export`ed as environment variables **before** calling `make`.
 
 **Kubernetes:**
 ```bash
-cd <WVA_REPO_PATH>
+cd $WVA_REPO_PATH
 
-# WVA_NS was captured in Step 1 — WVA runs in the same namespace as llm-d so it can watch workloads
-export WVA_NS=<namespace-from-step-1>
+export WVA_NS=$WVA_NS
 export LLMD_NS=$WVA_NS
 export NAMESPACE_SCOPED=true
 export SCALER_BACKEND=<prometheus-adapter|keda>
-export DEPLOY_LLM_D_INFRA=false        # skip llm-d deployment (already deployed, avoids HF_TOKEN requirement)
-export DEPLOY_LWS=false          # set false if LWS already installed
-export DEPLOY_PROMETHEUS=true    # set false if Prometheus already installed
+export DEPLOY_LLM_D_INFRA=false        # skip llm-d deployment (already deployed)
+export DEPLOY_LWS=false                # set false if LWS already installed
+export DEPLOY_PROMETHEUS=true          # set false if Prometheus already installed
 export DEPLOY_WVA=true
 export DEPLOY_PROMETHEUS_ADAPTER=true  # set false if using KEDA
 
@@ -297,39 +392,26 @@ make deploy-wva-on-k8s IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:lates
 
 **OpenShift:**
 ```bash
-cd <WVA_REPO_PATH>
+cd $WVA_REPO_PATH
 
-export WVA_NS=<namespace-from-step-1>
+export WVA_NS=$WVA_NS
 export LLMD_NS=$WVA_NS
 export NAMESPACE_SCOPED=true
 export SCALER_BACKEND=prometheus-adapter
-export DEPLOY_LLM_D_INFRA=false        # skip llm-d deployment (already deployed, avoids HF_TOKEN requirement)
-export MONITORING_NAMESPACE=<openshift-user-workload-monitoring|openshift-monitoring>
+export DEPLOY_LLM_D_INFRA=false
+export MONITORING_NAMESPACE=$MONITORING_NAMESPACE  # detected in step 4a.5
 export SKIP_TLS_VERIFY=true
 
 INSTALL_GATEWAY_CTRLPLANE=false \
 make deploy-wva-on-openshift IMG=ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
 ```
 
-**To customise thresholds**, edit the ConfigMap after deploy (takes effect without restart):
-```bash
-kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config \
-  -n <WVA_NS>
-```
-
-> **`LLM_D_MODELSERVICE_NAME`**: Used by `install-llmd-infra.sh` as the deployment name — the script uses it as-is. Default: `<GUIDE_NAME>-nvidia-gpu-vllm-decode`. Override when your deployment has a different name.
-
-> **OpenShift `INSTALL_GATEWAY_CTRLPLANE=false`**: Skips gateway control plane installation (defaults to `true`). Set to `false` when the gateway control plane is already installed.
-
-> **OpenShift exit code 2**: The Makefile chains scripts that may exit 2 even when WVA itself succeeded. Always verify with kubectl before assuming failure.
-
-> **`MONITORING_NAMESPACE`**: Check with: `kubectl get apiservice v1beta1.external.metrics.k8s.io -o jsonpath='{.spec.service.namespace}'`
+> **OpenShift exit code 2**: The Makefile may exit 2 even when WVA itself succeeded (chained scripts). Always verify with kubectl before assuming failure.
 
 **What the Makefile creates:**
 - WVA controller Deployment via Kustomize (`config/default` or `config/openshift`)
 - Prometheus monitoring stack (if `DEPLOY_PROMETHEUS=true`)
 - Scaler backend — Prometheus Adapter (HPA) or KEDA
-- llm-d infrastructure via `install-llmd-infra.sh` (gateway, EPP, ModelService)
 - **No VariantAutoscaling or HPA resources** — apply those in step 4e
 
 ---
@@ -337,11 +419,11 @@ kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config \
 ### 4c. Verify Controller
 
 ```bash
-kubectl get deployment workload-variant-autoscaler-controller-manager -n <WVA_NS>
-kubectl logs -n <WVA_NS> -l control-plane=controller-manager --tail=20 | grep -i "watching"
+kubectl get deployment workload-variant-autoscaler-controller-manager -n $WVA_NS
+kubectl logs -n $WVA_NS -l control-plane=controller-manager --tail=20 | grep -i "watching"
 ```
 
-Expected: controller Running, logs contain `"Watching single namespace"` with `"namespace":"<WVA_NS>"` (structured JSON log).
+Expected: controller `1/1 Ready`, logs contain `"Watching single namespace"` with `"namespace":"<WVA_NS>"`.
 
 **STOP. Report and ask:** "Controller deployed. Proceed to add accelerator labels? (yes/no)"
 
@@ -349,11 +431,13 @@ Expected: controller Running, logs contain `"Watching single namespace"` with `"
 
 ### 4d. Add Accelerator Labels
 
-Auto-detect the accelerator for each deployment:
+**Why this step is needed:** WVA uses the `inference.optimization/acceleratorName` label on each decode deployment to identify the GPU vendor backing it. This label is required for the VariantAutoscaling CRD to become `METRICSREADY: True` — without it, WVA cannot match the deployment to its GPU inventory and will not emit scaling metrics.
+
+Auto-detect the accelerator for each selected deployment:
 
 ```bash
 ACCELERATOR=$(skills/configure-wva-autoscaling-llm-d/scripts/detect-accelerator.sh \
-  <WVA_NS> <deployment-name>)
+  $WVA_NS <deployment-name>)
 echo "Detected: $ACCELERATOR"
 ```
 
@@ -363,57 +447,35 @@ If the script exits with an error, ask the user: "Could not auto-detect accelera
 
 Apply the label for EACH selected deployment:
 ```bash
-kubectl label deployment <deployment-name> -n <WVA_NS> \
+kubectl label deployment <deployment-name> -n $WVA_NS \
   inference.optimization/acceleratorName=$ACCELERATOR --overwrite
 ```
 
 **Verify:**
 ```bash
-kubectl get deployment -n <WVA_NS> \
+kubectl get deployment -n $WVA_NS \
   -o custom-columns=NAME:.metadata.name,ACCELERATOR:.metadata.labels."inference\.optimization/acceleratorName"
-```
-
-If using the VA-based path (not annotation-based), also verify and correct the VA's accelerator label:
-```bash
-# VA-based path only — skip if using annotation-based HPAs (no VA CRD exists)
-kubectl get variantautoscaling -n <WVA_NS> \
-  -o jsonpath='{.items[*].metadata.labels.inference\.optimization/acceleratorName}'
-# If any VA shows a GPU model name (e.g., "H100") instead of vendor (e.g., "nvidia"), patch it:
-kubectl patch variantautoscaling <va-name> -n <WVA_NS> --type=merge \
-  -p '{"metadata":{"labels":{"inference.optimization/acceleratorName":"'$ACCELERATOR'"}}}'
 ```
 
 ---
 
-### 4e. Apply VA + HPA for All Models
+### 4e. Apply VA + HPA for Selected Decode Deployments
 
-> **Note:** The VariantAutoscaling CRD is deprecated. The preferred approach is to annotate your HPA or ScaledObject directly (see annotation-based alternative below). The VA CRD path still works during the deprecation period.
+Apply a VariantAutoscaling + HPA for **each selected decode deployment** — the `install.sh` from step 4b does not create any VA or HPA resources.
 
-Apply a VariantAutoscaling + HPA (or annotated HPA) for **every** selected deployment — the `install.sh` from step 4b does not create any VA or HPA resources.
+> **Namespace scope**: With `NAMESPACE_SCOPED=true` the controller watches only `WVA_NS`. Deploy VAs and HPAs to that **same** namespace.
 
-> **Namespace scope**: With `NAMESPACE_SCOPED=true` the controller watches only the namespace where it runs (`WVA_NS`). Deploy VAs and HPAs to that **same** namespace, or set `NAMESPACE_SCOPED=false` to watch all namespaces.
+> **⚠️ TEMPORARY NOTE — VA + HPA path is required until image is updated:**
+> The annotation-based HPA mode (`--mode annotated`) was introduced in PR #1123 of the WVA repo. As of this writing, the published `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` image predates that PR and does not support it. **Use `--mode va-hpa` (or `--mode keda`) until the image is updated past PR #1123.**
+> Once the image includes PR #1123, `--mode annotated` can be used and this note can be removed.
 
-Run `apply-hpa.sh` for **each** selected deployment. Choose the mode that matches your scaler backend and VA preference:
+Run `apply-hpa.sh` for **each** selected deployment:
 
-**Annotated HPA (preferred — no VA CRD required):**
-```bash
-skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
-  --mode annotated \
-  --namespace <WVA_NS> \
-  --deployment <full-deployment-name> \
-  --model-id "<model-id>" \
-  --variant-cost "<variant_cost>" \
-  --min-replicas <min> \
-  --max-replicas <max> \
-  --scale-up-window <scale_up_window> \
-  --scale-down-window <scale_down_window>
-```
-
-**VA + HPA (Prometheus Adapter backend, VA CRD path):**
+**VA + HPA (Prometheus Adapter / HPA backend):**
 ```bash
 skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
   --mode va-hpa \
-  --namespace <WVA_NS> \
+  --namespace $WVA_NS \
   --deployment <full-deployment-name> \
   --model-id "<model-id>" \
   --variant-cost "<variant_cost>" \
@@ -428,7 +490,7 @@ skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
 ```bash
 skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
   --mode keda \
-  --namespace <WVA_NS> \
+  --namespace $WVA_NS \
   --deployment <full-deployment-name> \
   --model-id "<model-id>" \
   --variant-cost "<variant_cost>" \
@@ -444,38 +506,40 @@ skills/configure-wva-autoscaling-llm-d/scripts/apply-hpa.sh \
 
 > **Critical**: HPA metric name must be `wva_desired_replicas`. Do NOT use `wva_kv_cache_saturation` or `wva_queue_depth_saturation` — they are not exposed by Prometheus Adapter.
 
-> **`variant_name`** must match the resource WVA tracks: VA name (VA-based path) or HPA name (annotated path). `apply-hpa.sh` sets this correctly.
-
 > **`type: AverageValue, averageValue: "1"`**: HPA computes `desiredReplicas = currentReplicas × (metric / 1)` — directly matching WVA's recommendation.
 
 ---
 
-### 4f. Verify ALL Resources
+### 4f. Verify All Resources
 
 **Wait ~2 minutes for Prometheus to scrape metrics, then verify:**
 
 ```bash
-skills/configure-wva-autoscaling-llm-d/scripts/verify-wva.sh <WVA_NS>
+skills/configure-wva-autoscaling-llm-d/scripts/verify-wva.sh $WVA_NS
 ```
 
-If verification is incomplete (VAs not METRICSREADY, HPAs showing `<unknown>`), run the troubleshoot script:
+If verification is incomplete, run the troubleshoot script:
 ```bash
-skills/configure-wva-autoscaling-llm-d/scripts/troubleshoot-scaling.sh <WVA_NS>
+skills/configure-wva-autoscaling-llm-d/scripts/troubleshoot-scaling.sh $WVA_NS
 ```
 
-**Common causes:**
-- `METRICSREADY: False` → accelerator label missing on deployment or VA (re-run Step 4d)
-- HPA `<unknown>` → wrong metric name, `variant_name` mismatch, or Prometheus Adapter not running
-- Deployment at 0 replicas → `kubectl scale deployment <name> -n <WVA_NS> --replicas=1`
+**Common causes and resolutions:**
+
+| Symptom | Cause | Resolution |
+|---------|-------|------------|
+| `METRICSREADY: False` | Accelerator label missing on deployment or VA | Re-run Step 4d |
+| HPA `<unknown>` | Wrong metric name, `variant_name` mismatch, or Prometheus Adapter not running | Check HPA spec and Prometheus Adapter pod |
+| `ScalingDisabled` | Deployment at 0 replicas — HPA cannot scale from 0 | Scale to ≥1 first: `kubectl scale deployment <name> -n $WVA_NS --replicas=1`, or use KEDA for scale-to-zero |
+| `METRICSREADY: False` with pods Pending | GPUs not yet available on the cluster | **This is not a WVA error.** WVA is correctly configured. Inform the user: "WVA is ready and will activate automatically once GPU pods are scheduled. This may take time depending on cluster GPU availability — no further action needed." Continue to Step 5. |
+| EPP pod returning 500 in WVA logs | EPP has no running decode pods to proxy | Expected when the backing deployment is at 0 replicas. Will resolve once the deployment scales up. |
 
 **STOP. Report final status for each model:**
 ```
-Model 1 (Qwen/Qwen3-32B):     VA=METRICSREADY:True, HPA=1/1 ✓
-Model 2 (gpt-j-6b):            VA=METRICSREADY:True, HPA=1/1 ✓
-Model 3 (llama-3.1-70b):       VA=METRICSREADY:True, HPA=2/1 ✓
+Model 1 (openai/gpt-oss-20b):  VA=METRICSREADY:True,  HPA=2/2 ✓
+Model 2 (Qwen/Qwen3-32B):      VA=created, HPA=ScalingDisabled (0 replicas — awaiting GPU) ⚠
 ```
 
-**Ask:** "All models verified. Proceed to generate deployment script? (yes/no)"
+**Ask:** "All resources applied. Proceed to generate deployment script? (yes/no)"
 
 ---
 
@@ -487,9 +551,9 @@ Generate a script that can reproduce this entire deployment:
 cd skills/configure-wva-autoscaling-llm-d/scripts/
 
 ./generate-deploy-script.sh \
-  --namespace <namespace> \
+  --namespace $WVA_NS \
   --deployment <first-deployment-name> \
-  --wva-repo <wva-repo-path> \
+  --wva-repo $WVA_REPO_PATH \
   --model-id "<model-id>" \
   --variant-cost "<variant_cost>" \
   --accelerator <detected-accelerator> \
@@ -499,11 +563,11 @@ cd skills/configure-wva-autoscaling-llm-d/scripts/
   --queue-threshold <queue_length_threshold> \
   --scale-up-window <scale_up_window> \
   --scale-down-window <scale_down_window> \
-  --output deploy-wva-<namespace>.sh \
+  --output deploy-wva-$WVA_NS.sh \
   --non-interactive
 ```
 
-For additional models, append their `kubectl apply` commands to the generated script or create separate scripts.
+For additional models, append their `apply-hpa.sh` commands to the generated script.
 
 Tell the user:
 > "Deployment script saved to `<path>`. To reproduce the full WVA setup:
@@ -526,14 +590,14 @@ Sends concurrent streaming requests to fill KV cache, triggering WVA to recommen
 
 ```bash
 cd skills/configure-wva-autoscaling-llm-d/scripts/
-./test-wva-scaling.sh <namespace> <deployment-name> "<model-id>" 200
+./test-wva-scaling.sh $WVA_NS <deployment-name> "<model-id>" 200
 ```
 
 If the script fails (e.g., no gateway/InferencePool), use direct pod IP:
 ```bash
-POD_IP=$(kubectl get pod -n <namespace> -l llm-d.ai/role=decode -o jsonpath='{.items[0].status.podIP}')
+POD_IP=$(kubectl get pod -n $WVA_NS -l llm-d.ai/role=decode -o jsonpath='{.items[0].status.podIP}')
 
-kubectl run wva-load-test -n <namespace> --rm -i --restart=Never \
+kubectl run wva-load-test -n $WVA_NS --rm -i --restart=Never \
   --image=curlimages/curl:latest \
   --command -- sh -c "
 for i in \$(seq 1 200); do
@@ -549,13 +613,13 @@ wait"
 
 ```bash
 # Watch WVA decisions
-kubectl logs -n <namespace> -l control-plane=controller-manager -f | grep -E "shouldScaleUp|desiredReplicas"
+kubectl logs -n $WVA_NS -l control-plane=controller-manager -f | grep -E "shouldScaleUp|desiredReplicas"
 
 # Watch HPA
-kubectl get hpa -n <namespace> -w
+kubectl get hpa -n $WVA_NS -w
 
 # Watch replicas
-kubectl get deployment <deployment-name> -n <namespace> -w
+kubectl get deployment <deployment-name> -n $WVA_NS -w
 ```
 
 ### Expected result
@@ -584,14 +648,14 @@ Models configured:
   2. <deployment-2>  Model: <model-id>  Min/Max: 1/5   Cost: "5.0"   Status: ACTIVE
 
 Saved artifacts:
-  - Config YAML:  scripts/configs/wva-<namespace>.yaml
-  - Deploy script: scripts/deploy-wva-<namespace>.sh
+  - Config YAML:    scripts/configs/wva-<namespace>.yaml
+  - Deploy script:  scripts/deploy-wva-<namespace>.sh
 
 Commands:
   Redeploy:  ./scripts/deploy-wva-<namespace>.sh
   Verify:    ./scripts/verify-wva.sh <namespace>
   Test:      ./scripts/test-wva-scaling.sh <namespace> <deployment>
-  Undeploy:  cd <WVA_REPO_PATH> && WVA_NS=<WVA_NS> ./deploy/install.sh --undeploy
+  Undeploy:  cd $WVA_REPO_PATH && WVA_NS=$WVA_NS ./deploy/install.sh --undeploy
 ============================================
 ```
 
@@ -620,7 +684,7 @@ These must ALL be true for WVA to work:
 6. **`variantCost` must be a string** (e.g., `"10.0"` not `10.0`)
 7. **API version must be `llmd.ai/v1alpha1`** (not `inference.llmd.ai/v1alpha1`)
 
-### Environment Variables and Helm Values Quick Reference
+### Environment Variables Quick Reference
 
 Everything must be **`export`ed** before calling `make`, or passed inline on the `make` command.
 
@@ -629,26 +693,17 @@ Everything must be **`export`ed** before calling `make`, or passed inline on the
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `IMG` | WVA container image (also a Make arg) | `ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest` |
-| `WVA_NS` | WVA controller namespace | `workload-variant-autoscaler-system` — set to llm-d namespace (Step 1) |
-| `LLMD_NS` | Namespace where llm-d runs | `llm-d-inference-scheduler` |
-| `NAMESPACE_SCOPED` | Limit WVA to single namespace | `false` — set `true` for production (watches only `WVA_NS`) |
-| `DEPLOY_LLM_D_INFRA` | Deploy llm-d infrastructure | `true` — set `false` to skip (avoids HF_TOKEN requirement when llm-d is already deployed) |
+| `WVA_NS` | WVA controller namespace | Set to llm-d namespace (Step 1) |
+| `LLMD_NS` | Namespace where llm-d runs | Set equal to `WVA_NS` |
+| `NAMESPACE_SCOPED` | Limit WVA to single namespace | `false` — set `true` for production |
+| `DEPLOY_LLM_D_INFRA` | Deploy llm-d infrastructure | `true` — set `false` to skip when llm-d is already deployed |
 | `DEPLOY_WVA` | Deploy WVA controller | `true` |
 | `DEPLOY_LWS` | Deploy LeaderWorkerSet | `true` — set `false` if already installed |
 | `DEPLOY_PROMETHEUS` | Deploy kube-prometheus-stack | `true` — set `false` if already installed |
 | `DEPLOY_PROMETHEUS_ADAPTER` | Deploy Prometheus Adapter | `true` — set `false` when using KEDA |
 | `SCALER_BACKEND` | `prometheus-adapter` (HPA) or `keda` | `prometheus-adapter` |
-| `MONITORING_NAMESPACE` | Prometheus namespace | `workload-variant-autoscaler-monitoring` (k8s) / `openshift-user-workload-monitoring` (OCP) |
+| `MONITORING_NAMESPACE` | Prometheus namespace — auto-detected in Step 4a.5 | `workload-variant-autoscaler-monitoring` (k8s) / `openshift-user-workload-monitoring` (OCP) |
 | `SKIP_TLS_VERIFY` | Skip TLS for Prometheus | `false` |
-
-#### Env vars for `deploy/install-llmd-infra.sh` (export before `make`)
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LLM_D_MODELSERVICE_NAME` | llm-d ModelService base name **without** `-decode` suffix | `ms-<GUIDE_NAME>-llm-d-modelservice` |
-| `MODEL_ID` | Model identifier | `unsloth/Meta-Llama-3.1-8B` |
-| `ACCELERATOR_TYPE` | GPU vendor label (`nvidia`, `amd`, `cpu`) — auto-detected if unset | `H100` |
-| `INSTALL_GATEWAY_CTRLPLANE` | Install gateway control plane | `true` — set `false` if already installed |
 
 #### Threshold tuning (ConfigMap — live, no restart required)
 
@@ -656,7 +711,7 @@ Saturation thresholds live in the `wva-saturation-scaling-config` ConfigMap. Edi
 
 ```bash
 kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config \
-  -n <WVA_NS>
+  -n $WVA_NS
 ```
 
 | ConfigMap key | Description | Default |
@@ -668,21 +723,11 @@ kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config \
 
 HPA behavior (stabilization windows, min/max replicas) is set per-HPA resource — patch or re-apply the HPA manifest.
 
-> **Helm chart is deprecated.** Do not use `helm upgrade --set` to tune thresholds. The chart will be removed in a future release.
-
-### ConfigMap Live Tuning
-
-Saturation thresholds live in ConfigMap `wva-saturation-scaling-config`. Changes take effect without controller restart:
-
-```bash
-kubectl edit configmap workload-variant-autoscaler-saturation-scaling-config -n <namespace>
-```
-
 ### Asymmetric Stabilization Windows (post-deploy)
 
-Patch the HPA you created in Step 4e directly:
+Patch the HPA directly:
 ```bash
-kubectl patch hpa <hpa-name> -n <WVA_NS> --type=merge -p '{
+kubectl patch hpa <hpa-name> -n $WVA_NS --type=merge -p '{
   "spec": {
     "behavior": {
       "scaleUp":   {"stabilizationWindowSeconds": 60},
@@ -701,19 +746,18 @@ WVA and EPP (Inference Scheduler) must use identical thresholds:
 | `kvCacheThreshold` | `kvCacheUtilThreshold` |
 | `queueLengthThreshold` | `queueDepthThreshold` |
 
-After changing thresholds: `kubectl rollout restart deployment/<epp-deployment> -n <namespace>`
+After changing thresholds: `kubectl rollout restart deployment/<epp-deployment> -n $WVA_NS`
 
 ### Undeploy
 
 ```bash
-cd <WVA_REPO_PATH>
-WVA_NS=<WVA_NS> ./deploy/install.sh --undeploy
-# or: make undeploy-wva-on-k8s
+cd $WVA_REPO_PATH
+WVA_NS=$WVA_NS ./deploy/install.sh --undeploy
 ```
 
-Also delete any VAs, HPAs, or annotated HPAs you created manually:
+Also delete any VAs and HPAs created in step 4e:
 ```bash
-kubectl delete variantautoscaling,hpa -n <namespace> --all
+kubectl delete variantautoscaling,hpa -n $WVA_NS --all
 ```
 
 ### Known Issues
