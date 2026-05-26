@@ -21,7 +21,7 @@ description: Configure and deploy Workload Variant Autoscaler (WVA) for llm-d in
 > "Which Kubernetes namespace should WVA monitor?"
 > (Provide a single namespace, e.g., `my-llm-ns`)
 
-Store the answer as `WVA_NS` — it will be used throughout deployment. WVA will be deployed **into** this namespace so it can watch the llm-d workloads there.
+Export the answer in `WVA_NS` environment variable  — it will be used throughout deployment. WVA will be deployed **into** this namespace so it can watch the llm-d workloads there.
 
 Then discover ALL llm-d deployments in that namespace:
 
