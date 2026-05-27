@@ -39,14 +39,34 @@ If no results, try the alternative label:
 kubectl get deployment -n $WVA_NS -l app.kubernetes.io/part-of=llm-d -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas
 ```
 
-Present ALL findings:
+Also discover EPPs (InferencePool / EndpointPickerPool) and map which deployments each EPP routes to:
+
+```bash
+kubectl get inferencepool -n $WVA_NS -o custom-columns=NAME:.metadata.name,SELECTOR:.spec.targetPortNumber 2>/dev/null || \
+kubectl get endpointpickerpool -n $WVA_NS -o yaml 2>/dev/null
+```
+
+Determine which EPP routes to which decode deployments by inspecting the EPP's selector labels and matching them against the deployments' labels. Deployments served by the **same EPP** share a single WVA saturation-scaling ConfigMap — their thresholds (kv_cache_threshold, queue_length_threshold, etc.) must be identical. Deployments under **different EPPs** can have independent thresholds.
+
+Present ALL findings **grouped by EPP**:
+
 ```
 Namespace: my-llm-ns
-Found 3 llm-d decode deployments:
+Found 3 llm-d decode deployments across 2 EPPs:
+
+EPP: qwen-epp (routes to 2 deployments — shared WVA config)
   1. optimized-baseline-nvidia-gpu-vllm-decode  (model: Qwen/Qwen3-32B, replicas: 1)
-  2. ms-gpt-oss-6b-llm-d-modelservice-decode    (model: EleutherAI/gpt-j-6b, replicas: 1)
-  3. llama-70b-h100-decode                       (model: meta/llama-3.1-70b, replicas: 2)
+  2. qwen3-8b-decode                            (model: Qwen/Qwen3-8B, replicas: 2)
+
+EPP: gpt-epp (routes to 1 deployment)
+  3. ms-gpt-oss-6b-llm-d-modelservice-decode    (model: EleutherAI/gpt-j-6b, replicas: 1)
+
+Note: Deployments within the same EPP share saturation thresholds.
+      Deployments in different EPPs can have independent thresholds.
 ```
+
+If EPP discovery fails (no InferencePool/EndpointPickerPool CRDs), fall back to listing deployments without grouping and inform the user:
+> "Could not detect EPP routing. Presenting all deployments ungrouped — if they share an EPP, their saturation thresholds must match."
 
 **STOP. Ask:** "Which deployment(s) should WVA autoscale? (Enter numbers, names, or 'all')"
 
@@ -108,6 +128,35 @@ After user picks, also ask:
 - "Which scaler backend: HPA or KEDA?"
   - HPA: standard, works out-of-box. Min replicas = 1.
   - KEDA: required for scale-to-zero (min replicas = 0). Must be installed on cluster.
+
+#### Per-model customization
+
+**Ask:** "Do you want the same configuration for all selected deployments, or customize per model?"
+
+- If **same for all** → apply the chosen preset values uniformly. Proceed to auto-detection.
+- If **customize per model** → ask the following two questions:
+
+  **Question 1:** "Which configuration parameter(s) would you like to change?"
+
+  Present the available parameters:
+
+  | # | Parameter | Preset Value | Description |
+  |---|-----------|--------------|-------------|
+  | 1 | `kv_cache_threshold` | *(from preset)* | KV cache % that marks a replica as saturated |
+  | 2 | `queue_length_threshold` | *(from preset)* | Queue depth that marks a replica as saturated |
+  | 3 | `kv_spare_trigger` | *(from preset)* | Spare KV capacity trigger for scale-up |
+  | 4 | `queue_spare_trigger` | *(from preset)* | Spare queue capacity trigger for scale-up |
+  | 5 | `scale_up_window` | *(from preset)* | Seconds before scaling up |
+  | 6 | `scale_down_window` | *(from preset)* | Seconds before scaling down |
+  | 7 | `min_replicas` | *(from preset)* | Minimum replica count |
+  | 8 | `max_replicas` | *(user-provided)* | Maximum replica count |
+  | 9 | `variant_cost` | `"10.0"` | Cost weight (lower-cost variants scale first) |
+
+  **Question 2:** "Which deployment(s) should get the custom value?"
+
+  List the selected deployments (from Step 1) and let the user pick which ones get the override. Repeat for each parameter the user wants to change.
+
+  > Reminder: deployments within the same EPP must share saturation thresholds (`kv_cache_threshold`, `queue_length_threshold`, `kv_spare_trigger`, `queue_spare_trigger`). Warn the user if they attempt to set different saturation values for deployments in the same EPP.
 
 Then **auto-detect** the rest:
 - Model ID: from deployment labels or pod args
@@ -224,6 +273,32 @@ models:
 ```
 
 Tell the user: "Configuration saved to `<path>`. You can reload this in future runs."
+
+Then present a **configuration summary** to the user — do NOT just show the raw YAML. Explain what the config means and show a clear table:
+
+**Brief explanation:**
+> "Here's your WVA configuration. The **shared defaults** apply to all deployments unless a specific deployment has an override. WVA will use these thresholds to decide when your models are saturated and need more replicas."
+
+**Shared Defaults Table:**
+
+| Parameter | Value | Meaning |
+|-----------|-------|---------|
+| KV Cache Threshold | `0.80` | A replica is considered saturated when KV cache exceeds 80% |
+| Queue Length Threshold | `5` | A replica is considered saturated when queue depth exceeds 5 |
+| KV Spare Trigger | `0.10` | Scale up when average spare KV across healthy replicas < 10% |
+| Queue Spare Trigger | `3` | Scale up when average spare queue capacity < 3 |
+| Scale-up Window | `120s` | Wait 2 min of sustained saturation before adding replicas |
+| Scale-down Window | `300s` | Wait 5 min of low utilization before removing replicas |
+
+**Per-Deployment Table:**
+
+| Deployment | Model | Min | Max | Cost | Overrides |
+|-----------|-------|-----|-----|------|-----------|
+| optimized-baseline-nvidia-gpu-vllm-decode | Qwen/Qwen3-32B | 1 | 10 | "10.0" | *(none — uses defaults)* |
+| ms-gpt-oss-6b-llm-d-modelservice-decode | EleutherAI/gpt-j-6b | 1 | 5 | "5.0" | kv=0.70, queue=3, up=60s, down=180s |
+
+If any deployments share an EPP, add a note:
+> "Deployments 1 and 2 share EPP `qwen-epp` — their saturation thresholds are identical as required."
 
 **STOP. Ask:** "Configuration is ready. Shall I show you the deployment plan? (yes/no)"
 
