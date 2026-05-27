@@ -106,6 +106,7 @@ Work through the following steps for the first configuration.
 Tell the user: *"Starting Run A: $RUN_A_LABEL — deploying the stack."*
 
 Follow the **deploy-llm-d** skill workflow. The namespace is already set from Phase 0.
+Store generated files under local directory comparison dir.
 **If Run A is a baseline, "no llm-d scheduler", configuration**, follow the **Baseline Configuration Setup** procedure in the provided resources folder after deployment completes.
 
 ### 1.2 Run Benchmark
@@ -144,7 +145,7 @@ Write `$COMPARISON_DIR/run-a/run_state.json` with values collected during Steps 
 }
 ```
 
-Make sure `results_path` points to the `results` directory created in Step 1.2. Verify that the benchmark run didn't fail by (1) checking the content of `stderr.log` in `results` for error messages indicating premature termination of the run, and (2) making sure `results` directory contains json files (one or more) with metrics collected during the run. If the benchmark run failed, fix the issue and re-run the benchmark. If you are unable to fix the issue, ask the user to provide more information.
+Make sure `results_path` points to the `results` directory created in Step 1.2. Verify that the benchmark run didn't fail by (1) checking the content of `stderr.log` in `results` for error messages indicating premature termination of the run, and (2) making sure `results` directory contains json files (one or more) with metrics collected during the run. If the benchmark run failed, fix the issue and re-run the benchmark (if requests were processed in the failed run, restart the vllms pods to evict kv cache). If you are unable to fix the issue, ask the user to provide more information.
 
 ### 1.4 Verify vLLM Logs Collected
 
@@ -202,6 +203,7 @@ Repeat the same sequence for the second configuration.
 Tell the user: *"Starting Run B: $RUN_B_LABEL — deploying the stack."*
 
 Follow the **llm-d-kubernetes-deployment** skill workflow in the same namespace.
+Store generated files under local directory comparison dir.
 **If Run B is a baseline, "no llm-d scheduler", configuration** (shouldn't use llm-d scheduling), follow the **Baseline Configuration Setup** procedure in the provided resources folder after deployment completes.
 
 ### 2.2 Run Benchmark
@@ -275,6 +277,8 @@ Use this structure:
 | | Run A: <label> | Run B: <label> |
 |---|---|---|
 | **Guide** | | |
+| **llm-d version** | | |
+| **decoders image** | | |
 | **Model** | | |
 | **Hardware** | | |
 | **Gateway** | | |
@@ -300,6 +304,9 @@ Use this structure:
 
 > For throughput, positive delta means Run B is better.
 > For latency/TTFT/ITL/error rate, negative delta means Run B is better.
+
+## Requests errors
+Generate a report of the session requests errors causes.
 
 ## KV-Cache Performance Analysis
 Note: If metrics in "actual cache totals" could not be pulled, skip to "time-averaged cache hit rates". If none could be collected, skip the KV-Cache Performance Analysis section.

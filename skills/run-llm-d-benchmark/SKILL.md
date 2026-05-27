@@ -141,10 +141,13 @@ chmod u+x run_only.sh
 Use the command `./run_only.sh -c config.yaml`, monitor its progress and wait for its completion.
 
 Note that the benchmark harness pod may still be running also after the benchmarking run is completed.
+If benchmarking needs to be rerun due to an error in a previous run, vllm pods need to be restarted first to evict the kv cache.
+In case the the harness pod is OOMKilled, try to increase the harness memory. This can be done by patching the value of HARNESS_CPU_MEM directly in a modified version of run_only.sh
 
 ### Step 11: Locate and save results
 
-Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user.  This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
+Wait for harness pod to finish report generation (check harness logs for data available/done) before copying from the pvc.
+Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user. In case raw data is large (>1000 files) do not copy it from the pvc to local unless the user requested specifically. This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
 
 ### Step 12: Collect vLLM logs from pods
 
