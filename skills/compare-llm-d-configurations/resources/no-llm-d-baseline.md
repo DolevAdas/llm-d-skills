@@ -40,6 +40,7 @@ Only if the run is labeled as "baseline" or the user indicates it's a baseline c
    ```bash
    kubectl get pods -n $NAMESPACE --show-labels
    ```
+   If llm-d.ai/guide label exists - use it as well in the selector section.
 
    Inform the user which label should be used and update the baseline service selector accordingly.
 
