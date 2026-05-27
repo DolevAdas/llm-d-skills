@@ -10,7 +10,7 @@ description: Configure and deploy Workload Variant Autoscaler (WVA) for llm-d in
 3. **Do NOT modify existing repository code.** Cloning a missing repo is allowed. Exception: the kustomize symlink fix in Step 4b is a known bug fix — apply it if needed.
 4. **Use existing skill scripts when possible** — see [`scripts/SCRIPTS.md`](./scripts/SCRIPTS.md).
 5. **Before creating any Kubernetes resource**, state what will be created and why.
-6. **After each kubectl/helm/make command**, run a verification check and report the result before continuing.
+6. **After each kubectl/make command**, run a verification check and report the result before continuing.
 
 ---
 
@@ -56,7 +56,7 @@ Found 3 llm-d decode deployments:
 
 **Ask the user:**
 
-> "Where is your `llm-d-workload-variant-autoscaler` repository cloned locally? (e.g. `/home/user/dev/llm-d-workload-variant-autoscaler`)"
+> "Where is your `llm-d-workload-variant-autoscaler` repository cloned locally? "
 
 If the user provides a path, verify it exists:
 ```bash
@@ -128,11 +128,12 @@ Collect these values ONCE before asking about per-deployment configuration:
 |-----------|-------------|---------|
 | `kv_cache_threshold` | KV cache % that marks a replica as saturated | `0.80` |
 | `queue_length_threshold` | Queue depth that marks a replica as saturated | `5` |
-| `kv_spare_trigger` | Proactive scale-up when spare KV drops below this | `0.10` |
-| `queue_spare_trigger` | Proactive scale-up when spare queue drops below this | `3` |
+| `kv_spare_trigger` |  Scale up is requested when the average spare KV capacity across non-saturated replicas falls below this value.| `0.10` |
+| `queue_spare_trigger` | Scale up is requested when the average spare queue capacity across non-saturated replicas falls below this value. | `3` |
 | `scale_up_window` | Seconds to wait before scaling up | `120` |
 | `scale_down_window` | Seconds to wait before scaling down | `300` |
 
+The full explanation is in `$WVA_REPO_PATH/docs/developer-guide/saturation-scaling-config.md`.
 **Then ask:** "Do you want the same settings for all deployments, or configure each deployment separately?"
 
 - If **same for all** → use the namespace-level values above for all deployments; only ask per-deployment for min/max/cost.
@@ -767,5 +768,4 @@ See [Troubleshooting.md](./Troubleshooting.md) for common problems including:
 - HPA showing `<unknown>` (wrong metric or selector)
 - Controller not detecting VA resources (namespace-scoping)
 - CRD field manager conflicts
-- OpenShift Helm chart label bug
 - Scale-to-zero not working
