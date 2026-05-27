@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-saturation-scaling-config
+  namespace: <wva-namespace>  # The namespace WVA controller is deployed in (WVA_NS)
+data:
+  default: |
+    kvCacheThreshold: 0.70
+    queueLengthThreshold: 3
+    kvSpareTrigger: 0.15
+    queueSpareTrigger: 5
