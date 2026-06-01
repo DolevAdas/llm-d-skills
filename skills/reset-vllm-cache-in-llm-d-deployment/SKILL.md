@@ -13,10 +13,28 @@ Clear the KV / prefix cache on all vLLM pods in a running llm-d deployment so be
 
 ## Step 1: Ask for Namespace and Deployment
 
-**Always ask the user explicitly:**
-> "Which namespace is the llm-d deployment in?"
+Before asking, detect the current namespace context and gather nearby options to present as suggestions:
 
-Do not attempt to auto-detect or assume a namespace. Wait for their answer, then set `NAMESPACE` to that value.
+```bash
+# Current active namespace
+CURRENT_NS=$(oc project -q 2>/dev/null || kubectl config view --minify -o jsonpath='{..namespace}' 2>/dev/null || echo "")
+
+# Other namespaces that look llm-d related
+SUGGESTED_NS=$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+  | tr ' ' '\n' | grep -iE "llm-d|inference|serving|benchmark" | grep -v "^$CURRENT_NS$" | head -5)
+```
+
+Present the options to the user:
+> "Which namespace is the llm-d deployment in?
+>
+> **1. \<CURRENT_NS\>** *(current context)*
+> **2. \<first SUGGESTED_NS\>**
+> **3. \<second SUGGESTED_NS\>**
+> *(or type any namespace name)*"
+
+Use `CURRENT_NS` as the default if the user just confirms or says "yes/this one". If they pick a number, use the corresponding namespace. If they type a name, use that.
+
+Set `NAMESPACE` to their answer and proceed.
 
 Once the namespace is confirmed, list the llm-d deployments in it:
 ```bash
@@ -25,10 +43,13 @@ kubectl get deployments -n $NAMESPACE -l app.kubernetes.io/part-of=llm-d -o cust
 
 If that returns nothing, try a broader search:
 ```bash
-kubectl get deployments -n $NAMESPACE | grep -i "llmd\|llm-d\|vllm"
+kubectl get deployments -n $NAMESPACE | grep -iE "llm-d|vllm"
 ```
 
-Show the list to the user and ask:
+Count the results. If there is **exactly one** deployment, use it automatically and inform the user:
+> "Found one llm-d deployment: **\<DEPLOYMENT_NAME\>** — using it."
+
+If there are **multiple**, show the list and ask:
 > "Which deployment should be cache-reset? (or 'all' to reset every vLLM pod in the namespace)"
 
 Set `DEPLOYMENT_NAME` to their answer. If they choose a specific deployment, scope the pod selector to that deployment:
@@ -79,6 +100,7 @@ The VLLM_SERVER_DEV_MODE=1 environment variable unlocks internal developer-only,
 
 **Does vLLM Behave the Same in Terms of Speed?**
 Yes, the runtime inference speed is exactly identical.Setting this variable simply registers the developer API router paths during startup. It does not inject debug logging loops, change the underlying CUDA kernels, or degrade inference performance (Tokens Per Second, Time-to-First-Token).
+
 ## Step 3: Reset via /reset_prefix_cache (Preferred)
 
 If dev mode is confirmed, run the reset script:
