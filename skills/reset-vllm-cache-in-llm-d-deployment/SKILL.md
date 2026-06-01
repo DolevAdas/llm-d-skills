@@ -72,7 +72,13 @@ If dev mode is **not** enabled, inform the user:
   3. **Abort**
 
 ---
+**What VLLM_SERVER_DEV_MODE=1 Does**
+The VLLM_SERVER_DEV_MODE=1 environment variable unlocks internal developer-only, debugging, and experimental HTTP endpoints on the vLLM API server. By default, vLLM blocks these endpoints to prevent disruption or security exploits in production clusters.When you flip this flag on, it exposes several direct controls outside of the standard /v1/ OpenAI prefix, most notably:
+/reset_prefix_cache: Instantly flushes the internal PagedAttention radix/prefix cache without forcing an engine reboot.
+/sleep and /wake_up: Manually invokes vLLM's internal Sleep Mode to offload weights and wipe KV blocks entirely to test snapshotting.
 
+**Does vLLM Behave the Same in Terms of Speed?**
+Yes, the runtime inference speed is exactly identical.Setting this variable simply registers the developer API router paths during startup. It does not inject debug logging loops, change the underlying CUDA kernels, or degrade inference performance (Tokens Per Second, Time-to-First-Token).
 ## Step 3: Reset via /reset_prefix_cache (Preferred)
 
 If dev mode is confirmed, run the reset script:
