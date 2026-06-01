@@ -85,12 +85,31 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/check-dev-mode.sh
 
 This verifies whether `VLLM_SERVER_DEV_MODE=1` is set on the pods. The `/reset_prefix_cache` endpoint only exists when dev mode is enabled.
 
-If dev mode is **not** enabled, inform the user:
-- The preferred reset method requires `VLLM_SERVER_DEV_MODE=1` in the pod env
-- Ask if they want to:
-  1. **Enable dev mode** requires updating the deployment spec and waiting for pod rollout — this DOES restart pods
-  2. **Use the flood fallback** no restart needed, but slower and less precise
-  3. **Abort**
+If dev mode is **not** enabled, inform the user and offer three options:
+
+> "Dev mode (`VLLM_SERVER_DEV_MODE=1`) is not enabled on these pods. How would you like to proceed?
+>
+> **1. Enable dev mode** — I will patch the deployment and roll out new pods now. The pod restart will wipe the KV cache as a side effect, so your cache is already clean when the pods come back up. **The skill will end here — no further reset step needed.**
+> **2. Use flood fallback** — No restart needed. I'll flood the pods with random prompts to evict the cache via LRU. Slower and less precise.
+> **3. Abort**"
+
+**If the user chooses option 1 — Enable dev mode:**
+
+Run:
+```bash
+kubectl patch deployment $DEPLOYMENT_NAME -n $NAMESPACE --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"VLLM_SERVER_DEV_MODE","value":"1"}}]'
+
+kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+```
+
+Wait for rollout to complete, then report:
+> "Dev mode enabled. Pods restarted — KV cache is already cleared as a result of the pod restart. You can start benchmarking now. **Future cache resets can use the faster `/reset_prefix_cache` endpoint without restarting pods.**"
+
+**The skill ends here for option 1.** Do not proceed to Step 3 or Step 4.
+
+**If the user chooses option 2**, proceed to Step 4 (flood fallback).
+**If the user chooses option 3**, stop.
 
 ---
 **What VLLM_SERVER_DEV_MODE=1 Does**
