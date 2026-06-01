@@ -1,13 +1,13 @@
 ---
 name: reset-vllm-cache-in-llm-d-deployment
-description: Resets the KV cache on all vLLM pods in an llm-d deployment without restarting pods. Use this skill when the user wants to clear caches before benchmarking, reset vLLM state, flush prefix cache, or get a clean deployment state for performance testing — even if they don't say "cache" explicitly. Supports both the /reset_prefix_cache API (preferred) and a random-prompt flood fallback.
+description: Resets the KV cache on all vLLM pods in an llm-d deployment without restarting pods. Use this skill when the user wants to clear caches before proceeding, reset vLLM state, flush prefix cache, or get a clean deployment state for performance testing — even if they don't say "cache" explicitly. Supports both the /reset_prefix_cache API (preferred) and a random-prompt flood fallback.
 ---
 
 # Reset vLLM Cache in llm-d
 
 ## Purpose
 
-Clear the KV / prefix cache on all vLLM pods in a running llm-d deployment so benchmarks start from a clean state — without restarting pods. This avoids the overhead of pod restart (model reload, warmup) while ensuring no cached prefixes skew benchmark results.
+Clear the KV / prefix cache on all vLLM pods in a running llm-d deployment so the next run starts from a clean state — without restarting pods. This avoids the overhead of pod restart (model reload, warmup) while ensuring no cached prefixes skew results.
 
 ---
 
@@ -104,7 +104,7 @@ kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
 ```
 
 Wait for rollout to complete, then report:
-> "Dev mode enabled. Pods restarted — KV cache is already cleared as a result of the pod restart. You can start benchmarking now. **Future cache resets can use the faster `/reset_prefix_cache` endpoint without restarting pods.**"
+> "Dev mode enabled. Pods restarted — KV cache is already cleared as a result of the pod restart. You can proceed now. **Future cache resets can use the faster `/reset_prefix_cache` endpoint without restarting pods.**"
 
 **The skill ends here for option 1.** Do not proceed to Step 3 or Step 4.
 
@@ -112,13 +112,15 @@ Wait for rollout to complete, then report:
 **If the user chooses option 3**, stop.
 
 ---
-**What VLLM_SERVER_DEV_MODE=1 Does**
-The VLLM_SERVER_DEV_MODE=1 environment variable unlocks internal developer-only, debugging, and experimental HTTP endpoints on the vLLM API server. By default, vLLM blocks these endpoints to prevent disruption or security exploits in production clusters.When you flip this flag on, it exposes several direct controls outside of the standard /v1/ OpenAI prefix, most notably:
-/reset_prefix_cache: Instantly flushes the internal PagedAttention radix/prefix cache without forcing an engine reboot.
-/sleep and /wake_up: Manually invokes vLLM's internal Sleep Mode to offload weights and wipe KV blocks entirely to test snapshotting.
 
-**Does vLLM Behave the Same in Terms of Speed?**
-Yes, the runtime inference speed is exactly identical.Setting this variable simply registers the developer API router paths during startup. It does not inject debug logging loops, change the underlying CUDA kernels, or degrade inference performance (Tokens Per Second, Time-to-First-Token).
+### What VLLM_SERVER_DEV_MODE=1 Does
+
+`VLLM_SERVER_DEV_MODE=1` unlocks internal developer-only HTTP endpoints on the vLLM API server. By default, vLLM blocks these endpoints to prevent disruption or security exploits in production clusters. When enabled, it exposes several direct controls outside of the standard `/v1/` prefix, most notably:
+
+- `/reset_prefix_cache` — instantly flushes the internal prefix cache without an engine reboot
+- `/sleep` and `/wake_up` — invokes vLLM's Sleep Mode to offload weights and wipe KV blocks entirely
+
+**Does enabling dev mode affect inference speed?** No. It only registers the developer API router paths during startup. It does not inject debug logging, change CUDA kernels, or degrade inference performance (TPS, TTFT).
 
 ## Step 3: Reset via /reset_prefix_cache (Preferred)
 
@@ -147,20 +149,58 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/reset-prefix-cache.sh
 
 ### If reset succeeds
 
-Report success and tell the user they can start benchmarking after a 2-second settling period.
+Report success and tell the user they can proceed after a 2-second settling period.
 
 ### If reset fails
 
-Show the user which pods failed and why. Common failure reasons:
-- **404**: Dev mode not enabled on that pod
-- **Connection refused**: Pod not ready or wrong port
-- **Exec error**: RBAC permissions missing
+For each failed pod, diagnose and attempt to resolve automatically before involving the user:
 
-Then ask the user: **"Reset failed on some pods. Would you like to try the random-prompt flood fallback instead?"**
+**404 — endpoint not found (dev mode not enabled on that pod)**
+The pod may have been created before the env var patch was applied. Verify:
+```bash
+kubectl get pod $POD -n $NAMESPACE -o jsonpath='{.spec.containers[0].env}' | grep VLLM_SERVER_DEV_MODE
+```
+If missing, patch the deployment and wait for rollout (same as Step 2 option 1). Since this restarts the pod, the KV cache is already cleared — report success and end the skill.
+
+**Connection refused — pod not ready or wrong port**
+Check pod status and readiness:
+```bash
+kubectl get pod $POD -n $NAMESPACE
+kubectl logs $POD -n $NAMESPACE --tail=30
+```
+If the pod is starting up, wait for it to become Ready (up to 60s) and retry the reset once. If it stays unready, check for OOMKilled or CrashLoopBackOff in the logs and report the specific error to the user.
+
+**kubectl exec error — RBAC / permissions**
+Try an alternative approach — call the endpoint via port-forward instead of exec:
+```bash
+kubectl port-forward pod/$POD -n $NAMESPACE 18000:$VLLM_PORT &
+PF_PID=$!
+sleep 2
+curl -s -w "\n%{http_code}" -X POST \
+  "http://localhost:18000/reset_prefix_cache?reset_running_requests=true&reset_external=true"
+kill $PF_PID
+```
+If port-forward also fails due to permissions, report to the user that RBAC prevents both exec and port-forward access.
+
+**After attempting all automatic fixes:** if any pods are still failing, report only the unresolved pods and the specific blocker:
+> "Could not reset cache on \<pod(s)\>: \<reason\>. Would you like to try the random-prompt flood fallback instead?"
+
+**Last resort — suggest restarting the vLLM decoders:**
+If the flood fallback is also declined or fails, suggest:
+> "As a last resort, restarting the vLLM decoder pods will guarantee a clean KV cache. This will cause a brief model reload (~1-2 min). Run:
+> ```bash
+> kubectl rollout restart deployment/$DEPLOYMENT_NAME -n $NAMESPACE
+> kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+> ```"
 
 ---
 
 ## Step 4: Fallback — Flood with Random Prompts
+
+> **How this method works and its verification limitation:**
+> The flood works by sending many large unique random prompts to saturate the KV cache. Once the cache is full, vLLM's LRU policy evicts the oldest entries — including the ones from previous runs — to make room for the new random data. After flooding, the cache will be **near 100% full** of garbage data, not empty.
+>
+> This means `kv_cache_usage_perc` will be high (≈ 1.0) after a successful flood — **not 0.0**. There is no way to directly verify that specific old entries were evicted without resending the original prompts and checking for a cache miss, which would re-populate the cache. Instead, success is confirmed by verifying the cache reached saturation (≥ 0.9), which means the flood covered enough capacity to have displaced the old entries via LRU.
 
 Only run this if:
 - The user explicitly chose the flood fallback, OR
@@ -187,8 +227,8 @@ export NAMESPACE="$NAMESPACE"
 export VLLM_PORT="${VLLM_PORT:-8000}"
 export MODEL_NAME="$MODEL_NAME"
 export LABEL_SELECTOR="$LABEL_SELECTOR"
-export NUM_FLOOD_REQUESTS="${NUM_FLOOD_REQUESTS:-50}"
-export FLOOD_PROMPT_LENGTH="${FLOOD_PROMPT_LENGTH:-2000}"
+export NUM_FLOOD_REQUESTS="${NUM_FLOOD_REQUESTS:-200}"
+export FLOOD_PROMPT_LENGTH="${FLOOD_PROMPT_LENGTH:-4000}"
 bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/flood-random-prompts.sh
 ```
 
@@ -203,7 +243,29 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/flood-random-prompts.sh
 
 **Note on cache size:** For large models (70B+) with high `gpu_memory_utilization`, the default 200 requests may not fully evict the cache. Increase `NUM_FLOOD_REQUESTS` or `FLOOD_PROMPT_LENGTH` if metrics still show cache hits after flooding.
 
-After flooding completes, tell the user to wait 5 seconds before benchmarking.
+After flooding completes, verify the cache reached saturation on each pod (up to 10 immediate retries):
+```bash
+for POD in $POD_NAMES; do
+  SATURATED="no"
+  for i in $(seq 1 10); do
+    USAGE=$(kubectl exec -n $NAMESPACE $POD -- \
+      curl -s http://localhost:$VLLM_PORT/metrics 2>/dev/null \
+      | grep "vllm:kv_cache_usage_perc" | grep -v "HELP\|TYPE" | awk '{print $2}')
+    [ -z "$USAGE" ] && echo "$POD: could not read metrics, retrying..." && continue
+    SATURATED=$(awk "BEGIN {print ($USAGE >= 0.9) ? \"yes\" : \"no\"}")
+    if [ "$SATURATED" = "yes" ]; then
+      echo "$POD: cache saturated (usage=$USAGE) — old entries displaced"
+      break
+    fi
+    echo "$POD: cache at $USAGE, not yet saturated — retrying..."
+  done
+  if [ "$SATURATED" != "yes" ]; then
+    echo "WARNING: $POD cache only reached $USAGE after flooding — old entries may not be fully evicted. Consider increasing NUM_FLOOD_REQUESTS."
+  fi
+done
+```
+
+Only report success once `kv_cache_usage_perc ≥ 0.9` is confirmed on all pods. If a pod stays below 0.9 after all retries, report it to the user and suggest increasing `NUM_FLOOD_REQUESTS` or `FLOOD_PROMPT_LENGTH`.
 
 ---
 
@@ -217,7 +279,9 @@ kubectl exec -n $NAMESPACE <pod> -- \
   | grep "vllm:kv_cache_usage_perc"
 ```
 
-A value of `0.0` confirms the cache was fully cleared. A non-zero value means cached blocks are still occupied.
+Interpret the result based on which method was used:
+- **Step 3 (`/reset_prefix_cache`)**: expect `0.0` — the API clears all blocks immediately.
+- **Step 4 (flood)**: expect `≥ 0.9` — the cache is full of random garbage, confirming old entries were displaced. `0.0` after a flood means the flood requests never populated the cache (wrong model name, endpoint error, etc.).
 
 **Do not use `prefix_cache_hits_total` or `prefix_cache_queries_total` for verification** — these are Prometheus counters that accumulate since pod start and never reset, so they will always show the pre-reset values.
 
@@ -227,5 +291,5 @@ A value of `0.0` confirms the cache was fully cleared. A non-zero value means ca
 
 - **NixL / LMCache connectors**: The `reset_external=true` flag is a no-op for nixl and LMCache connectors. If the llm-d deployment uses disaggregated prefill/decode with a shared KV store, the shared store will NOT be cleared. Inform the user of this limitation.
 - **Security**: `VLLM_SERVER_DEV_MODE=1` exposes development endpoints. Recommend disabling it after benchmarking in production-like environments.
-- **No pod restarts**: Neither method requires pod restarts. The prefix cache reset is immediate; the flood method takes longer but is equally non-disruptive.
+- **Pod restarts**: The `/reset_prefix_cache` API and flood fallback do not restart pods. However, enabling dev mode (Step 2 option 1) does trigger a pod restart — which also clears the cache as a side effect, so no further reset step is needed in that case.
 - **In-flight requests**: When using `reset_running_requests=true`, any active inference requests are terminated. Always ensure no traffic is hitting the pods before resetting, or use `RESET_RUNNING_REQUESTS=false` to only clear the prefix cache without disrupting active work.
