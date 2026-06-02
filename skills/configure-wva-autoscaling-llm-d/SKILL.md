@@ -348,7 +348,7 @@ Step 5:    Generate reusable deployment script
 |----------|---------------|
 | WVA User Guide | `${WVA_REPO_PATH}/deploy/README.md` |
 | Kustomize overlays | `${WVA_REPO_PATH}/config/default/` (k8s), `config/openshift/` (OCP) |
-| Troubleshooting | [Troubleshooting.md](./docs/Troubleshooting.md) |
+| Troubleshooting | [TROUBLESHOOTING.md](./docs/TROUBLESHOOTING.md) |
 | WVA GitHub | https://github.com/llm-d/llm-d-workload-variant-autoscaler |
 
 **STOP. Ask:** "Does this plan look correct? Ready to deploy? (yes/no/adjust)"

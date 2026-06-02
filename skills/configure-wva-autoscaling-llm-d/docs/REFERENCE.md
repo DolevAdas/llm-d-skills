@@ -99,7 +99,7 @@ kubectl delete variantautoscaling,hpa -n $WVA_NS --all
 
 ## Known Issues
 
-See [Troubleshooting.md](./Troubleshooting.md) for common problems including:
+See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for common problems including:
 - METRICSREADY: False (accelerator label issues)
 - HPA showing `<unknown>` (wrong metric or selector)
 - Controller not detecting VA resources (namespace-scoping)
