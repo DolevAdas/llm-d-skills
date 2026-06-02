@@ -26,7 +26,7 @@ Ask the user:
 > **2–N.** \<SUGGESTED_NS\>
 > *(or type any namespace)*"
 
-`CURRENT_NS` is the default if the user just confirms. Set `NAMESPACE`.
+Set `NAMESPACE` to the user's answer. If the user just confirms without specifying, use `CURRENT_NS` — the namespace they are currently working in.
 
 List llm-d deployments:
 ```bash
@@ -78,6 +78,8 @@ kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
 Report success and stop. Future resets can use Step 3 without restarting.
 
 **Option 2** → go to Step 4. **Option 3** → stop.
+
+---
 
 ## Step 3: Reset via /reset_prefix_cache (Preferred)
 
@@ -155,6 +157,7 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/flood-random-prompts.sh
 
 Verify saturation after flooding (up to 10 retries, no sleep):
 ```bash
+POD_NAMES=$(kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}')
 for POD in $POD_NAMES; do
   SATURATED="no"
   for i in $(seq 1 10); do
@@ -179,7 +182,8 @@ Report success once all pods show `≥ 0.9`. If any pod stays below, tell the us
 These are live gauges — they reflect current state without sending any requests:
 
 ```bash
-kubectl exec -n $NAMESPACE <pod> -- \
+POD=$(kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n $NAMESPACE $POD -- \
   curl -s http://localhost:${VLLM_PORT}/metrics \
   | grep -E "vllm:kv_cache_usage_perc|vllm:cpu_kv_cache_usage_perc" \
   | grep -v "HELP\|TYPE"
