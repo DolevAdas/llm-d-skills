@@ -499,4 +499,4 @@ oc get --raw "/apis/external.metrics.k8s.io/v1beta1/namespaces/<namespace>/wva_d
 ## Additional Resources
 
 - [Main Skill Documentation](../SKILL.md)
-- [Troubleshooting Guide](../Troubleshooting.md)
+- [Troubleshooting Guide](../docs/TROUBLESHOOTING.md)
