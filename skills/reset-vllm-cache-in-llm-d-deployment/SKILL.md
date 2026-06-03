@@ -97,7 +97,7 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/reset-prefix-cache.sh
 |----------|---------|-------------|
 | `VLLM_PORT` | `8000` | Port vLLM listens on inside the pod |
 | `RESET_RUNNING_REQUESTS` | `true` | Preempts in-flight requests; use `false` to clear cache without interrupting active work |
-| `RESET_EXTERNAL` | `true` | Also clears CPU offload blocks (via `OffloadingConnector`; no-op for NixL/LMCache) |
+| `RESET_EXTERNAL` | `true` | Clears CPU offload blocks **only if** `CPUOffloadingSpec` is used (2-tier). With `TieringOffloadingSpec` (3-tier: GPU+CPU+disk), this is a no-op — neither CPU nor disk is cleared. No-op for NixL/LMCache connectors too. |
 
 **Warn the user before running:** `RESET_RUNNING_REQUESTS=true` terminates in-flight requests. Ensure no active traffic is hitting the pods.
 
@@ -201,7 +201,7 @@ kubectl exec -n $NAMESPACE $POD -- \
 ## Important Notes
 
 - **NixL / LMCache connectors**: `reset_external=true` is a no-op for these. The shared KV store in disaggregated prefill/decode setups will NOT be cleared.
-- **CPU offloading**: only Step 3 with `reset_external=true` clears the CPU cache. The flood does not.
+- **CPU offloading**: Step 3 with `reset_external=true` clears the CPU cache **only when `CPUOffloadingSpec` is used** (2-tier setup). If `TieringOffloadingSpec` is configured (3-tier: GPU + CPU + disk), `reset_external=true` is a no-op for both CPU and disk — this is a vLLM limitation. The flood method never clears the CPU cache regardless.
 - **In-flight requests**: `reset_running_requests=true` terminates active requests. Use `false` to clear the cache without disrupting ongoing work.
 - **Dev mode security**: `VLLM_SERVER_DEV_MODE=1` exposes internal endpoints. Disable after use in production-like environments.
 - **Pod restarts**: Step 3 and flood do not restart pods. Enabling dev mode (Step 2 option 1) does — but that clears the cache as a side effect, so no further reset is needed.
