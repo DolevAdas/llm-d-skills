@@ -113,22 +113,16 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/reset-prefix-cache.sh
 
 If still failing: *"Reset failed on \<pod(s)\>: \<reason\>. Try flood fallback?"*
 
-**Last resort** (flood also declined or fails): restart the decoder pods:
-```bash
-kubectl rollout restart deployment/$DEPLOYMENT_NAME -n $NAMESPACE
-kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
-```
-
 ---
 
 ## Step 4: Fallback — Flood with Random Prompts
 
 > **How it works:** sends unique random prompts to saturate the GPU KV cache, evicting old entries via LRU. After flooding, GPU cache is ≈ 100% full — **not** empty. Success is confirmed when `kv_cache_usage_perc ≥ 0.9`.
 >
-> **CPU offloading:** the flood does **not** clear the CPU cache. Blocks evicted from GPU are copied to the (larger) CPU cache and remain accessible. If CPU offloading is enabled, use Step 3 with `reset_external=true` instead.
+> **CPU offloading:** the flood does **not** clear the CPU cache. Blocks evicted from GPU are copied to the (larger) CPU cache and remain accessible. If CPU offloading is enabled, use Step 5 (pod restart) instead.
 
-Before starting, offer a restart as an alternative:
-> "Pod restart (~1-2 min) guarantees a fully clean cache (GPU + CPU). Flood is faster but GPU-only. Which do you prefer?"
+Before starting, offer Step 5 as an alternative:
+> "Pod restart (~1-2 min) guarantees a fully clean cache. Flood is faster but GPU-only and unreliable with CPU/disk offloading. Which do you prefer?"
 
 Detect model name:
 ```bash
@@ -177,7 +171,24 @@ Report success once all pods show `≥ 0.9`. If any pod stays below, tell the us
 
 ---
 
-## Step 5: Verification (Optional)
+## Step 5: Fallback — Restart vLLM Decoder Pods
+
+Use this step when:
+- Step 3 and Step 4 both failed or were declined, OR
+- The deployment uses `TieringOffloadingSpec` (3-tier: GPU + CPU + disk) and a fully clean cache is required — the API and flood cannot clear CPU or disk tiers in this configuration
+
+A pod restart guarantees all cache tiers are wiped (GPU, CPU, and disk offload are all reset on a fresh pod). Model reload takes ~1-2 min.
+
+```bash
+kubectl rollout restart deployment/$DEPLOYMENT_NAME -n $NAMESPACE
+kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+```
+
+Report success once rollout completes. The user can proceed immediately — no further verification needed.
+
+---
+
+## Step 6: Verification (Optional)
 
 These are live gauges — they reflect current state without sending any requests:
 
@@ -191,8 +202,9 @@ kubectl exec -n $NAMESPACE $POD -- \
 
 | Method | Expected GPU | Expected CPU |
 |--------|-------------|--------------|
-| Step 3 (`/reset_prefix_cache`) | `0.0` | `0.0` |
+| Step 3 (`/reset_prefix_cache`) | `0.0` | `0.0` (2-tier only; no-op for 3-tier) |
 | Step 4 (flood) | `≥ 0.9` | not meaningful — flood doesn't clear CPU |
+| Step 5 (pod restart) | `0.0` | `0.0` |
 
 > Do **not** use `prefix_cache_hits_total` / `prefix_cache_queries_total` — these counters accumulate since pod start and never reset.
 
