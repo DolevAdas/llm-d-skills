@@ -130,6 +130,41 @@
 - **Solution**: Check HF token secret exists and is valid
 - **Solution**: If many pods in CrashLoopBackOff, check for pod explosion issue (missing replicas in kustomization.yaml)
 
+**vLLM crashes on OpenShift with `KeyError` / `getpwuid` error (vLLM v0.22+):**
+
+- **Problem**: vLLM pods crash immediately on startup with a Python `KeyError` or traceback involving `getpass.getuser()` / `pwd.getpwuid(os.getuid())`
+- **Root Cause**: vLLM v0.22+ (and newer PyTorch) calls `getpass.getuser()` → `pwd.getpwuid(os.getuid())` during module import, in both the main process and subprocesses. OpenShift assigns arbitrary UIDs (e.g., `1001910000`) that are not present in `/etc/passwd`, causing a `KeyError`.
+- **Symptoms**:
+  - Pod enters `CrashLoopBackOff` immediately after starting
+  - Logs show a Python traceback ending with `KeyError` or `pwd.getpwuid failed: uid not found`
+  - Only happens on OpenShift (or other platforms that run containers as arbitrary non-root UIDs)
+  - Affects vLLM v0.22+; earlier versions (≤0.19.x) did not have this issue
+- **Diagnosis**:
+  ```bash
+  kubectl logs <pod> -n ${NAMESPACE} | grep -i "getpwuid\|getuser\|KeyError"
+  ```
+- **Solution**: Add these three environment variables to the vLLM container spec:
+  ```yaml
+  env:
+    - name: USER
+      value: vllm
+    - name: HOME
+      value: /.cache
+    - name: TORCHINDUCTOR_CACHE_DIR
+      value: /.cache/torchinductor
+  ```
+- **Why it works**: Python's `getpass.getuser()` checks the `USER` (and `LOGNAME`, `USERNAME`) env vars before calling `getpwuid()`. Setting `USER=vllm` causes it to return immediately without ever touching `/etc/passwd`. `HOME=/.cache` covers any other home-directory-dependent writes. `TORCHINDUCTOR_CACHE_DIR` directs the dynamo/inductor compilation cache to the writable `/.cache` emptyDir volume.
+- **Required volume**: Make sure `/.cache` is backed by an emptyDir volume mount in the pod spec:
+  ```yaml
+  volumeMounts:
+    - mountPath: /.cache
+      name: torch-compile-cache
+  volumes:
+    - name: torch-compile-cache
+      emptyDir: {}
+  ```
+- **Prevention**: Always include these three env vars when deploying vLLM v0.22+ on OpenShift.
+
 **Pods pending:**
 - Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
 - **Additional checks**:
