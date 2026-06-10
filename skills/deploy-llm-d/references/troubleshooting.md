@@ -130,6 +130,40 @@
 - **Solution**: Check HF token secret exists and is valid
 - **Solution**: If many pods in CrashLoopBackOff, check for pod explosion issue (missing replicas in kustomization.yaml)
 
+**vLLM crashes on OpenShift with `KeyError` / `getpwuid` error (vLLM v0.22+):**
+
+- **Problem**: vLLM pods crash on startup with a traceback involving `getpass.getuser()` / `pwd.getpwuid(os.getuid())`. OpenShift assigns arbitrary UIDs not in `/etc/passwd`, causing a `KeyError`.
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} | grep -i "getpwuid\|KeyError"`
+- **Solution**: Add these env vars and an emptyDir volume to the vLLM container spec:
+  ```yaml
+  env:
+    - name: USER
+      value: vllm
+    - name: HOME
+      value: /.cache
+    - name: TORCHINDUCTOR_CACHE_DIR
+      value: /.cache/torchinductor
+  volumeMounts:
+    - mountPath: /.cache
+      name: torch-compile-cache
+  volumes:
+    - name: torch-compile-cache
+      emptyDir: {}
+  ```
+  `USER=vllm` short-circuits `getpass.getuser()` before it hits `/etc/passwd`. `HOME` and `TORCHINDUCTOR_CACHE_DIR` redirect cache writes to the writable emptyDir.
+
+**vLLM crashes on TP=1 with large models: "KV cache memory insufficient" (ValueError):**
+
+- **Problem**: vLLM pod crashes during engine init with `ValueError: ... KV cache is needed, which is larger than the available KV cache memory`. On TP=1, a 60B+ model leaves only ~2-3 GiB for KV cache — too little for the model's default max seq len (e.g. 131072 tokens).
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} --previous | grep -E "KV cache|ValueError|Available"`
+- **Solution**: Cap `--max-model-len` to your actual workload needs (e.g. 8192 for ISL≤5000 + OSL≤500):
+  ```yaml
+  args:
+    - "--max-model-len=8192"
+    - "--gpu-memory-utilization=0.90"
+  ```
+- **Note**: Affects all TP=1 pods (including prefill in P/D disaggregation). TP=2+ shards the model across GPUs and typically has enough headroom.
+
 **Pods pending:**
 - Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
 - **Additional checks**:
