@@ -149,7 +149,7 @@ Make sure `results_path` points to the `results` directory created in Step 1.2. 
 
 ### 1.4 Verify vLLM Logs Collected
 
-Before proceeding to teardown, ensure vLLM pod logs have been collected. The **run-llm-d-benchmark** skill should have collected these during Step 12, but verify they exist:
+Before proceeding to teardown, ensure vLLM pod logs have been collected. The **run-llm-d-benchmark** skill should have collected these during Step 11, but verify they exist:
 
 ```bash
 # Check if logs directory exists and has content
@@ -289,6 +289,7 @@ Use this structure:
 ---
 
 ## Performance Results
+For throughput: make sure to measure end to end throughput (actual serving capacity) and read actual output length when possible.
 
 | Metric | Run A: <label> | Run B: <label> | Delta (B − A) |
 |---|---|---|---|
@@ -297,6 +298,7 @@ Use this structure:
 | Latency P50 (ms) | | | |
 | Latency P90 (ms) | | | |
 | Latency P99 (ms) | | | |
+| TTFT mean (s) | | | |
 | TTFT P50 (ms) | | | |
 | TTFT P90 (ms) | | | |
 | ITL mean (ms) | | | |
@@ -308,10 +310,14 @@ Use this structure:
 ## Requests errors
 Generate a report of the session requests errors causes.
 
+## Per-Stage Load Ladder
+If the workload contains stages, generate a summary across the full ladder (exclude warmup stages) with: Rate, Run A: <label> Output tokens/sec, Run B: <label> Output tokens/sec, Run A: <label> TTFT mean in s, Run B: <label> TTFT mean in s, Run A: <label> TTFT p90 in s, Run B: <label> TTFT p90 in s
+
 ## KV-Cache Performance Analysis
 Note: If metrics in "actual cache totals" could not be pulled, skip to "time-averaged cache hit rates". If none could be collected, skip the KV-Cache Performance Analysis section.
 
 ### Actual Cache Totals (Authoritative)
+Try to extract "GPU KV cache size" from vllm and mention it.
 Extract from `results/metrics/processed/metrics_summary.json` using cumulative counter totals:
 
 | Metric | Run A: <label> | Run B: <label> | Delta (B − A) | Change (%) |
