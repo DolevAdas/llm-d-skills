@@ -132,18 +132,9 @@
 
 **vLLM crashes on OpenShift with `KeyError` / `getpwuid` error (vLLM v0.22+):**
 
-- **Problem**: vLLM pods crash immediately on startup with a Python `KeyError` or traceback involving `getpass.getuser()` / `pwd.getpwuid(os.getuid())`
-- **Root Cause**: vLLM v0.22+ (and newer PyTorch) calls `getpass.getuser()` → `pwd.getpwuid(os.getuid())` during module import, in both the main process and subprocesses. OpenShift assigns arbitrary UIDs (e.g., `1001910000`) that are not present in `/etc/passwd`, causing a `KeyError`.
-- **Symptoms**:
-  - Pod enters `CrashLoopBackOff` immediately after starting
-  - Logs show a Python traceback ending with `KeyError` or `pwd.getpwuid failed: uid not found`
-  - Only happens on OpenShift (or other platforms that run containers as arbitrary non-root UIDs)
-  - Affects vLLM v0.22+; earlier versions (≤0.19.x) did not have this issue
-- **Diagnosis**:
-  ```bash
-  kubectl logs <pod> -n ${NAMESPACE} | grep -i "getpwuid\|getuser\|KeyError"
-  ```
-- **Solution**: Add these three environment variables to the vLLM container spec:
+- **Problem**: vLLM pods crash on startup with a traceback involving `getpass.getuser()` / `pwd.getpwuid(os.getuid())`. OpenShift assigns arbitrary UIDs not in `/etc/passwd`, causing a `KeyError`.
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} | grep -i "getpwuid\|KeyError"`
+- **Solution**: Add these env vars and an emptyDir volume to the vLLM container spec:
   ```yaml
   env:
     - name: USER
@@ -152,10 +143,6 @@
       value: /.cache
     - name: TORCHINDUCTOR_CACHE_DIR
       value: /.cache/torchinductor
-  ```
-- **Why it works**: Python's `getpass.getuser()` checks the `USER` (and `LOGNAME`, `USERNAME`) env vars before calling `getpwuid()`. Setting `USER=vllm` causes it to return immediately without ever touching `/etc/passwd`. `HOME=/.cache` covers any other home-directory-dependent writes. `TORCHINDUCTOR_CACHE_DIR` directs the dynamo/inductor compilation cache to the writable `/.cache` emptyDir volume.
-- **Required volume**: Make sure `/.cache` is backed by an emptyDir volume mount in the pod spec:
-  ```yaml
   volumeMounts:
     - mountPath: /.cache
       name: torch-compile-cache
@@ -163,31 +150,19 @@
     - name: torch-compile-cache
       emptyDir: {}
   ```
-- **Prevention**: Always include these three env vars when deploying vLLM v0.22+ on OpenShift.
+  `USER=vllm` short-circuits `getpass.getuser()` before it hits `/etc/passwd`. `HOME` and `TORCHINDUCTOR_CACHE_DIR` redirect cache writes to the writable emptyDir.
 
 **vLLM crashes on TP=1 with large models: "KV cache memory insufficient" (ValueError):**
 
-- **Problem**: vLLM pod crashes during engine initialization with `ValueError: To serve at least one request with the model's max seq len (131072), N GiB KV cache is needed, which is larger than the available KV cache memory (M GiB).`
-- **Root Cause**: With TP=1 (single GPU), a large model (e.g., gpt-oss-120b at ~65 GiB) consumes most of the GPU's memory. With 80 GiB GPUs and `--gpu-memory-utilization=0.90`, CUDA graph profiling overhead further reduces available KV cache to ~2-3 GiB — far less than the ~4.8 GiB needed for the model's full 131072 context window.
-- **When it happens**: TP=1 deployments of 60-70B+ models on 80 GiB GPUs. TP=2+ avoids this because the model is sharded across multiple GPUs, leaving more headroom per GPU.
-- **Symptoms**:
-  - Pod enters `CrashLoopBackOff` after ~30 seconds (after model loads, during KV cache sizing)
-  - Logs show: `Available KV cache memory: X GiB` followed by `ValueError: ... KV cache is needed, which is larger than the available KV cache memory`
-  - Error happens in `EngineCore`, not at model load time
-- **Diagnosis**:
-  ```bash
-  kubectl logs <pod> -n ${NAMESPACE} --previous | grep -E "KV cache|ValueError|Available"
-  ```
-- **Solution**: Add `--max-model-len` capped to what your benchmark actually needs. For benchmarks with ISL≤5000 + OSL≤500 (total ≤5500 tokens), 8192 is sufficient and safe:
+- **Problem**: vLLM pod crashes during engine init with `ValueError: ... KV cache is needed, which is larger than the available KV cache memory`. On TP=1, a 60B+ model leaves only ~2-3 GiB for KV cache — too little for the model's default max seq len (e.g. 131072 tokens).
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} --previous | grep -E "KV cache|ValueError|Available"`
+- **Solution**: Cap `--max-model-len` to your actual workload needs (e.g. 8192 for ISL≤5000 + OSL≤500):
   ```yaml
   args:
     - "--max-model-len=8192"
     - "--gpu-memory-utilization=0.90"
   ```
-  KV cache needed scales linearly: if 131072 needs 4.8 GiB, then 8192 needs only ~0.3 GiB — well within the 2-3 GiB available.
-- **Alternative**: Increase `--gpu-memory-utilization` to 0.95 (leaves less headroom for CUDA overhead, riskier).
-- **Note**: This affects all TP=1 components including prefill pods in P/D disaggregation. TP=4 decode pods typically have enough KV cache headroom and don't need this flag.
-- **Prevention**: Always add `--max-model-len` matching your benchmark's ISL+OSL when deploying TP=1 on large (60B+) models.
+- **Note**: Affects all TP=1 pods (including prefill in P/D disaggregation). TP=2+ shards the model across GPUs and typically has enough headroom.
 
 **Pods pending:**
 - Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
