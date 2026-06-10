@@ -144,12 +144,7 @@ Note that the benchmark harness pod may still be running also after the benchmar
 If benchmarking needs to be rerun due to an error in a previous run, vllm pods need to be restarted first to evict the kv cache.
 In case the the harness pod is OOMKilled, try to increase the harness memory. This can be done by patching the value of HARNESS_CPU_MEM directly in a modified version of run_only.sh
 
-### Step 11: Locate and save results
-
-Wait for harness pod to finish report generation (check harness logs for data available/done) before copying from the pvc.
-Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user. In case raw data is large (>1000 files) do not copy it from the pvc to local unless the user requested specifically. This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
-
-### Step 12: Collect vLLM logs from pods
+### Step 11: Collect vLLM logs from pods
 
 Collect logs from all vLLM pods in the namespace to aid in debugging and performance analysis. First, identify the vLLM pods:
 
@@ -176,6 +171,11 @@ done
 If the `--timestamps` flag is not supported or causes issues, omit it. If a pod has multiple containers, add `-c <container-name>` to specify the vLLM container.
 
 Notify the user of which pod logs were collected and where they are saved.
+
+### Step 12: Locate and save results
+
+Wait for harness pod to finish report generation (check harness logs for data available/done) before copying from the pvc.
+Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user. In case raw data is large (>1000 files) do not copy it from the pvc to local unless the user requested specifically and/or processed metrics are missing. This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
 
 ### Step 13: Run analyses and save them
 
