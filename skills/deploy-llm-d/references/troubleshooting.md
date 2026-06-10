@@ -165,6 +165,30 @@
   ```
 - **Prevention**: Always include these three env vars when deploying vLLM v0.22+ on OpenShift.
 
+**vLLM crashes on TP=1 with large models: "KV cache memory insufficient" (ValueError):**
+
+- **Problem**: vLLM pod crashes during engine initialization with `ValueError: To serve at least one request with the model's max seq len (131072), N GiB KV cache is needed, which is larger than the available KV cache memory (M GiB).`
+- **Root Cause**: With TP=1 (single GPU), a large model (e.g., gpt-oss-120b at ~65 GiB) consumes most of the GPU's memory. With 80 GiB GPUs and `--gpu-memory-utilization=0.90`, CUDA graph profiling overhead further reduces available KV cache to ~2-3 GiB — far less than the ~4.8 GiB needed for the model's full 131072 context window.
+- **When it happens**: TP=1 deployments of 60-70B+ models on 80 GiB GPUs. TP=2+ avoids this because the model is sharded across multiple GPUs, leaving more headroom per GPU.
+- **Symptoms**:
+  - Pod enters `CrashLoopBackOff` after ~30 seconds (after model loads, during KV cache sizing)
+  - Logs show: `Available KV cache memory: X GiB` followed by `ValueError: ... KV cache is needed, which is larger than the available KV cache memory`
+  - Error happens in `EngineCore`, not at model load time
+- **Diagnosis**:
+  ```bash
+  kubectl logs <pod> -n ${NAMESPACE} --previous | grep -E "KV cache|ValueError|Available"
+  ```
+- **Solution**: Add `--max-model-len` capped to what your benchmark actually needs. For benchmarks with ISL≤5000 + OSL≤500 (total ≤5500 tokens), 8192 is sufficient and safe:
+  ```yaml
+  args:
+    - "--max-model-len=8192"
+    - "--gpu-memory-utilization=0.90"
+  ```
+  KV cache needed scales linearly: if 131072 needs 4.8 GiB, then 8192 needs only ~0.3 GiB — well within the 2-3 GiB available.
+- **Alternative**: Increase `--gpu-memory-utilization` to 0.95 (leaves less headroom for CUDA overhead, riskier).
+- **Note**: This affects all TP=1 components including prefill pods in P/D disaggregation. TP=4 decode pods typically have enough KV cache headroom and don't need this flag.
+- **Prevention**: Always add `--max-model-len` matching your benchmark's ISL+OSL when deploying TP=1 on large (60B+) models.
+
 **Pods pending:**
 - Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
 - **Additional checks**:
