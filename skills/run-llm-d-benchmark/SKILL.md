@@ -175,7 +175,7 @@ Notify the user of which pod logs were collected and where they are saved.
 ### Step 12: Locate and save results
 
 Wait for harness pod to finish report generation (check harness logs for data available/done) before copying from the pvc.
-Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user. In case raw data is large (>1000 files) do not copy it from the pvc to local unless the user requested specifically and/or processed metrics are missing. This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
+Ask the user for a path to store the results. Save the benchmarking results by copying them from the BENCHMARK_PVC to a local `results` directory inside the path specified by the user. Copy metrics/raw folder only if metrics/processed doesn't exist or the user explicitly asked to copy the raw folder. If copying the raw metrics, warn the user in case raw data is large (>1000 files) and get additional confirmation. This step requires locating the results of the current benchmarkr run in the BENCHMARK_PVC. This can be performed using the command ` kubectl exec -n $NAMESPACE llmdbench-harness-launcher -- ls -ltr /requests/`.
 
 ### Step 13: Run analyses and save them
 
