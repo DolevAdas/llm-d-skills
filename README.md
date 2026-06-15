@@ -20,3 +20,7 @@ In the case of Claude code, skills residing in `.claude/skills/` at the project 
 | [run-llm-d-benchmark](skills/run-llm-d-benchmark/) | Run a benchmark workload against an already deployed llm-d stack using llm-d-benchmark tooling. |
 | [compare-llm-d-configurations](skills/compare-llm-d-configurations/) | Compare the benchmark performance of two llm-d stack configurations end-to-end. |
 | [configure-wva-autoscaling-llm-d](skills/configure-wva-autoscaling-llm-d/) | Configure and optimize Workload Variant Autoscaler (WVA) for llm-d inference deployments. |
+
+## Autoconfig
+
+[`autoconfig/`](autoconfig/) is a larger, self-contained sub-project (kept outside `skills/` because it carries its own tested Python renderer, fixtures, and design docs). It configures an llm-d EPP `EndpointPickerConfig` from workload + SLA inputs and renders a complete deployable YAML set. The agent skill lives at [`autoconfig/skill/llm-d-autoconfig/`](autoconfig/skill/llm-d-autoconfig/); see [`autoconfig/README.md`](autoconfig/README.md) for how to install and run it.

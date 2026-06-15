@@ -1,0 +1,250 @@
+{
+  "version": "0.3.1",
+  "input_hash": "8c7cdbfdd13c8d2f",
+  "decisions": {
+    "workload_class": "latency-tight",
+    "epp": {
+      "chart": "standalone",
+      "image_tag": "main",
+      "endpoint_picker_config": {
+        "apiVersion": "llm-d.ai/v1alpha1",
+        "kind": "EndpointPickerConfig",
+        "plugins": [
+          {
+            "type": "queue-scorer"
+          },
+          {
+            "type": "kv-cache-utilization-scorer"
+          },
+          {
+            "type": "prefix-cache-scorer",
+            "parameters": {
+              "autoTune": true,
+              "maxPrefixTokensToMatch": 131072
+            }
+          },
+          {
+            "type": "metrics-data-source",
+            "parameters": {
+              "insecureSkipVerify": true,
+              "path": "/metrics",
+              "scheme": "http"
+            }
+          },
+          {
+            "type": "core-metrics-extractor"
+          },
+          {
+            "type": "predicted-latency-producer",
+            "parameters": {
+              "streamingMode": true
+            }
+          },
+          {
+            "type": "prefix-cache-affinity-filter",
+            "name": "strict-affinity-filter",
+            "parameters": {
+              "affinityThreshold": 0.99
+            }
+          },
+          {
+            "type": "prefix-cache-affinity-filter",
+            "name": "loose-affinity-filter",
+            "parameters": {
+              "affinityThreshold": 0.8
+            }
+          },
+          {
+            "type": "latency-scorer",
+            "parameters": {
+              "ttftWeight": 0.1,
+              "tpotWeight": 0.9
+            }
+          },
+          {
+            "type": "weighted-random-picker"
+          },
+          {
+            "type": "slo-headroom-tier-filter"
+          },
+          {
+            "type": "latency-slo-admitter"
+          }
+        ],
+        "schedulingProfiles": [
+          {
+            "name": "default",
+            "plugins": [
+              {
+                "pluginRef": "predicted-latency-producer"
+              },
+              {
+                "pluginRef": "strict-affinity-filter"
+              },
+              {
+                "pluginRef": "slo-headroom-tier-filter"
+              },
+              {
+                "pluginRef": "loose-affinity-filter"
+              },
+              {
+                "pluginRef": "latency-scorer"
+              },
+              {
+                "pluginRef": "weighted-random-picker"
+              }
+            ]
+          }
+        ]
+      },
+      "chart_toggles": {
+        "router.latencyPredictor.enabled": true
+      }
+    },
+    "benchmark": {
+      "harness": "guidellm",
+      "harness_image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2",
+      "config": {
+        "endpoint": {
+          "stack_name": "realtime-Llama-3.1-8B-Instruct",
+          "model": "meta-llama/Llama-3.1-8B-Instruct",
+          "namespace": "${NAMESPACE}",
+          "base_url": "${IP}",
+          "hf_token_secret": null
+        },
+        "control": {
+          "work_dir": "$HOME/llm-d-bench-work",
+          "kubectl": "kubectl"
+        },
+        "harness": {
+          "name": "guidellm",
+          "results_pvc": "${BENCHMARK_PVC}",
+          "namespace": "${NAMESPACE}",
+          "parallelism": 1,
+          "wait_timeout": 6000,
+          "image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2"
+        },
+        "workload": {
+          "sanity": {
+            "target": "${IP}",
+            "model": "meta-llama/Llama-3.1-8B-Instruct",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              1
+            ],
+            "max_seconds": 30,
+            "data": {
+              "prompt_tokens": 500,
+              "output_tokens": 200
+            }
+          },
+          "sla_validation": {
+            "target": "${IP}",
+            "model": "meta-llama/Llama-3.1-8B-Instruct",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              6,
+              12,
+              20
+            ],
+            "max_seconds": 120,
+            "data": {
+              "prompt_tokens_min": 250,
+              "prompt_tokens_max": 750,
+              "prompt_tokens": 500,
+              "prompt_tokens_stdev": 50,
+              "output_tokens_min": 100,
+              "output_tokens_max": 300,
+              "output_tokens": 200,
+              "output_tokens_stdev": 20,
+              "samples": 1000
+            },
+            "sla_targets": {
+              "ttft_ms_p95_target": 200,
+              "tpot_ms_p95_target": 15
+            },
+            "_rate_derivation": "workload class latency-tight baseline 3.0 req/s/replica \u00d7 8 replicas, adjusted for ISL/OSL \u2192 ~24.0 req/s estimated max; rates are 25%/50%/85% of that"
+          }
+        },
+        "_hf_token_secret": null
+      }
+    },
+    "context": {
+      "namespace": "realtime-prod",
+      "release_name": "realtime",
+      "deploy_mode": "standalone",
+      "gateway_provider": null,
+      "modelserver_deploy_planned": true,
+      "hf_secret_name": null,
+      "hf_secret_exists": false,
+      "bench_tokenizer_override": null
+    },
+    "features": {
+      "enable_latency_predictor": true,
+      "enable_precise_prefix_cache": false,
+      "enable_tiered_cache": false,
+      "enable_flow_control": false,
+      "enable_wide_ep": false,
+      "enable_inference_objective": false,
+      "enable_model_rewrite": false,
+      "autoscaler": null,
+      "serving_pattern": "sync",
+      "autotune_supported": true
+    },
+    "topology": {
+      "mode": "agg",
+      "replicas": 8,
+      "tp": 1,
+      "prefill_replicas": null,
+      "prefill_tp": null,
+      "decode_replicas": null,
+      "decode_tp": null,
+      "pd_transport": null
+    },
+    "model": "meta-llama/Llama-3.1-8B-Instruct"
+  },
+  "rationale": [
+    "Topology: agg, replicas=8, tp=1",
+    "Plugin set (12 plugins): queue-scorer, kv-cache-utilization-scorer, prefix-cache-scorer, metrics-data-source, core-metrics-extractor, predicted-latency-producer, strict-affinity-filter, loose-affinity-filter, latency-scorer, weighted-random-picker, slo-headroom-tier-filter, latency-slo-admitter",
+    "Chart: llm-d-router (standalone variant; matches optimized-baseline guide)",
+    "latency-scorer.ttftWeight = 0.1 \u2014 computed from SLA TTFT 200ms, TPOT 15ms, OSL 200: ttftWeight = 200 / (200 + 2985) = 0.063, clamped to [0.1, 0.9]. (Derivation is ours, not upstream-prescribed; the latency-scorer README's default is 0.8.)",
+    "latency-scorer.tpotWeight = 0.9 \u2014 1 - ttftWeight (0.1) = 0.9",
+    "prefix-cache-scorer.autoTune = True \u2014 plugin default. Reads vllm:cache_config_info per-pod to size LRUCapacityPerServer (num_gpu_blocks) and BlockSizeTokens (block_size). Verify the model server exports the metric.",
+    "prefix-cache-scorer.maxPrefixTokensToMatch = 131072 \u2014 set to model_context_length=131072. Plugin divides by autoTuned block_size at request time."
+  ],
+  "parameters": [
+    {
+      "name": "latency-scorer.ttftWeight",
+      "value": 0.1,
+      "tier": "T1",
+      "rationale": "computed from SLA TTFT 200ms, TPOT 15ms, OSL 200: ttftWeight = 200 / (200 + 2985) = 0.063, clamped to [0.1, 0.9]. (Derivation is ours, not upstream-prescribed; the latency-scorer README's default is 0.8.)"
+    },
+    {
+      "name": "latency-scorer.tpotWeight",
+      "value": 0.9,
+      "tier": "T1",
+      "rationale": "1 - ttftWeight (0.1) = 0.9"
+    },
+    {
+      "name": "prefix-cache-scorer.autoTune",
+      "value": true,
+      "tier": "T3",
+      "rationale": "plugin default. Reads vllm:cache_config_info per-pod to size LRUCapacityPerServer (num_gpu_blocks) and BlockSizeTokens (block_size). Verify the model server exports the metric."
+    },
+    {
+      "name": "prefix-cache-scorer.maxPrefixTokensToMatch",
+      "value": 131072,
+      "tier": "T1",
+      "rationale": "set to model_context_length=131072. Plugin divides by autoTuned block_size at request time."
+    }
+  ],
+  "unresolved_questions": [],
+  "warnings": [
+    "latency-predictor: deploy via the chart toggle `router.latencyPredictor.enabled=true` \u2014 this adds 2 sidecar containers per EPP pod at chart defaults (1 training-server + 1 prediction-server; predictionServers.count is configurable). Resource asks: ~8Gi memory requested / 16Gi limit, ~30Gi emptyDir, ~10 CPU requested. Startup +30-60s. Source: llm-d-router/config/charts/routerlib/values.yaml.",
+    "latency-predictor assumes a homogeneous InferencePool (same GPU/model/serving config across pods). Mixed pools give bad predictions.",
+    "latency-predictor SLO mode uses streamingMode=true on the producer. If non-streaming clients hit this stack they won't contribute to training samples \u2014 set streamingMode=false if your clients don't stream. Source: predicted-latency-slo.values.yaml."
+  ],
+  "errors": []
+}
