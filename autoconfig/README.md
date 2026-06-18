@@ -125,7 +125,7 @@ python3 skill/llm-d-autoconfig/scripts/verify_doc_map.py
 ## Project Structure
 
 ```
-autoconfig-poc/
+autoconfig/
 ├── README.md                       # this file
 ├── docs/
 │   ├── SUPPORT.md                  # guide-by-guide coverage matrix

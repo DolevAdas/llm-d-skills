@@ -355,7 +355,7 @@ plugins:
 gateway_providers:
   istio:
     summary: "Self-hosted istio gateway controller. Required for service mesh integration."
-    main: https://github.com/llm-d/llm-d/blob/main/guides/prereq/gateways/istio.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/istio.md
     secondary:
       - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/istio/kustomization.yaml
       - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/istio/gateway.yaml
@@ -363,7 +363,7 @@ gateway_providers:
 
   gke:
     summary: "GKE managed L7 LB. Internal (gke-l7-rilb) or external (gke-l7-regional-external-managed)."
-    main: https://github.com/llm-d/llm-d/blob/main/guides/prereq/gateways/gke.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/gke.md
     secondary:
       - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/gke-l7-rilb/kustomization.yaml
       - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/gke-l7-regional-external-managed/kustomization.yaml
@@ -371,13 +371,13 @@ gateway_providers:
 
   agentgateway:
     summary: "Rust-based AI gateway purpose-built for LLM/MCP/A2A workloads."
-    main: https://github.com/llm-d/llm-d/blob/main/guides/prereq/gateways/agentgateway.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/agentgateway.md
     secondary:
       - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/agentgateway/kustomization.yaml
 
   index:
     summary: "Browse all gateway provider options."
-    main: https://github.com/llm-d/llm-d/blob/main/guides/prereq/gateways/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/README.md
     secondary: []
 
 # ---------------------------------------------------------------------------
@@ -386,38 +386,38 @@ gateway_providers:
 infra_providers:
   gke:
     summary: "GKE-specific: RDMA on A3 Ultra/A4, gIB, multi-net, NCCL, Gateway API."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/gke/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/gke/README.md
     secondary:
       - https://cloud.google.com/ai-hypercomputer/docs/create/gke-ai-hypercompute-custom
 
   aks:
     summary: "Azure Kubernetes Service."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/aks/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/aks/README.md
     secondary: []
 
   digitalocean:
     summary: "DigitalOcean Kubernetes."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/digitalocean/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/digitalocean/README.md
     secondary: []
 
   minikube:
     summary: "Local minikube (testing)."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/minikube/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/minikube/README.md
     secondary: []
 
   openshift:
     summary: "OpenShift on-prem."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/openshift/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/openshift/README.md
     secondary: []
 
   openshift_aws:
     summary: "OpenShift on AWS."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/openshift-aws/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/openshift-aws/README.md
     secondary: []
 
   index:
     summary: "Browse infra-provider docs."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/README.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/README.md
     secondary: []
 
 # ---------------------------------------------------------------------------
@@ -507,47 +507,47 @@ schemas:
 concept_docs:
   optimized_baseline_concept:
     summary: "When optimized-baseline is the right choice."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/optimized-baseline.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/optimized-baseline.md
     secondary: []
 
   pd_disaggregation_concept:
     summary: "When PD is the right choice."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/pd-disaggregation.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/pd-disaggregation.md
     secondary: []
 
   precise_prefix_cache_aware_concept:
     summary: "When precise prefix cache is the right choice."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/precise-prefix-cache-routing.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/precise-prefix-cache-routing.md
     secondary: []
 
   predicted_latency_concept:
     summary: "When predicted-latency routing is the right choice."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/predicted-latency.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/predicted-latency.md
     secondary: []
 
   tiered_prefix_cache_concept:
     summary: "When tiered prefix cache offload is the right choice."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/tiered-prefix-cache.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/tiered-prefix-cache.md
     secondary: []
 
   wide_expert_parallelism_concept:
     summary: "When wide expert parallelism (LWS) is the right choice."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/wide-expert-parallelism.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/wide-expert-parallelism.md
     secondary: []
 
   workload_autoscaling_concept:
     summary: "When to add autoscaling and which option (WVA vs HPA-EPP)."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/workload-autoscaling.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/traffic-control/workload-autoscaling.md
     secondary: []
 
   flow_control_concept:
     summary: "When to enable flow control (admission/queueing/priority)."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/flow-control.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/traffic-control/flow-control.md
     secondary: []
 
   asynchronous_processing_concept:
     summary: "When async processing is the right choice."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/asynchronous-processing.md
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/workloads/batch-serving/asynchronous-processing.md
     secondary: []
 
   index:
@@ -562,42 +562,42 @@ concept_docs:
 proposals:
   index:
     summary: "Index of design proposals."
-    main: https://github.com/llm-d/llm-d/tree/main/docs/proposals
+    main: https://github.com/llm-d/llm-d/tree/main/proposals
     secondary: []
 
   llm_d_overview:
     summary: "Top-level llm-d project proposal."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/proposals/llm-d.md
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d.md
     secondary: []
 
   autoscaler:
     summary: "Future autoscaler design (beyond current WVA/HPA)."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/proposals/autoscaler.md
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/autoscaler.md
     secondary: []
 
   coordinator:
     summary: "Multi-cluster coordinator proposal."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/proposals/coordinator.md
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/coordinator.md
     secondary: []
 
   inference_resilience_operator:
     summary: "Resilience operator for inference workloads."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/proposals/inference-resilience-operator.md
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/inference-resilience-operator.md
     secondary: []
 
   payload_processor:
     summary: "Inference payload processor design."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/proposals/llm-d-inference-payload-processor.md
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d-inference-payload-processor.md
     secondary: []
 
   planner:
     summary: "llm-d planner design."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/proposals/llm-d-planner.md
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d-planner.md
     secondary: []
 
   skills:
-    summary: "Agent skill proposal — relevant context for the autoconfig-poc skill itself."
-    main: https://github.com/llm-d/llm-d/blob/main/docs/proposals/llm-d-skills.md
+    summary: "Agent skill proposal — relevant context for the autoconfig skill itself."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d-skills.md
     secondary: []
 
 # ---------------------------------------------------------------------------
@@ -619,7 +619,7 @@ cluster_resources:
     summary: "RDMA NIC + RoCE setup for PD KV transfer."
     main: https://llm-d.ai/docs/resources/rdma/rdma-configuration
     secondary:
-      - https://github.com/llm-d/llm-d/blob/main/docs/infra-providers/gke/README.md
+      - https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/gke/README.md
 
 # ---------------------------------------------------------------------------
 # Implementation repos — cite as secondary when guide README lacks detail.

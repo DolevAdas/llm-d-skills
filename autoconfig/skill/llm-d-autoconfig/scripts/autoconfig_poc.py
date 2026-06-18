@@ -1442,7 +1442,7 @@ _GUIDE_VALUES_URL_TEMPLATE = {
 }
 
 
-# autoconfig-poc's own default name for the HF token Secret it scaffolds.
+# autoconfig's own default name for the HF token Secret it scaffolds.
 # Not an upstream convention — the canonical modelserver overlays at
 # llm-d/guides/optimized-baseline/modelserver/gpu/vllm/base/patch-vllm.yaml
 # leave HF token wiring up to the user (env block is commented out). We pick
@@ -1633,7 +1633,7 @@ def _render_namespace(namespace: str) -> str:
         "kind": "Namespace",
         "metadata": {
             "name": namespace,
-            "annotations": {"llm-d.ai/generated-by": "autoconfig-poc"},
+            "annotations": {"llm-d.ai/generated-by": "autoconfig"},
         },
     }
     return yaml.safe_dump(ns, sort_keys=False)
@@ -1644,7 +1644,7 @@ def _render_hf_token_secret(namespace: str, *, name: str = _DEFAULT_HF_SECRET_NA
     fill in HF_TOKEN before model server pulls gated weights. Public-only
     models can apply as-is.
 
-    The `name` defaults to autoconfig-poc's own scaffold name
+    The `name` defaults to autoconfig's own scaffold name
     (`_DEFAULT_HF_SECRET_NAME` = "llm-d-hf-token"). This is NOT an upstream
     convention — see the `_DEFAULT_HF_SECRET_NAME` constant for the audit
     trail. Callers should only invoke this when render_bundle's scaffold
@@ -1658,7 +1658,7 @@ def _render_hf_token_secret(namespace: str, *, name: str = _DEFAULT_HF_SECRET_NA
             "name": name,
             "namespace": namespace,
             "annotations": {
-                "llm-d.ai/generated-by": "autoconfig-poc",
+                "llm-d.ai/generated-by": "autoconfig",
                 "llm-d.ai/scaffold": (
                     f"fill HF_TOKEN before applying for gated models. Public "
                     f"models work with an empty value. Edit via `kubectl edit "
@@ -1705,7 +1705,7 @@ def _render_gateway(*, namespace: str, gateway_provider: str) -> str:
             "name": "llm-d-inference-gateway",
             "namespace": namespace,
             "annotations": {
-                "llm-d.ai/generated-by": "autoconfig-poc",
+                "llm-d.ai/generated-by": "autoconfig",
                 "llm-d.ai/gateway-provider": gateway_provider,
             },
         },
@@ -1734,7 +1734,7 @@ def _render_httproute(*, release_name: str, namespace: str, gateway_provider: st
             "name": f"{release_name}-route",
             "namespace": namespace,
             "annotations": {
-                "llm-d.ai/generated-by": "autoconfig-poc",
+                "llm-d.ai/generated-by": "autoconfig",
                 "llm-d.ai/gateway-provider": gateway_provider,
             },
         },
@@ -1839,7 +1839,7 @@ def _render_wva_variant_autoscaling(*, release: str, namespace: str,
         "metadata": {
             "name": release,
             "namespace": namespace,
-            "annotations": {"llm-d.ai/generated-by": "autoconfig-poc"},
+            "annotations": {"llm-d.ai/generated-by": "autoconfig"},
         },
         "spec": {
             "modelID": model,
@@ -1864,7 +1864,7 @@ def _render_hpa_for_inferencepool(*, release: str, namespace: str) -> str:
         "metadata": {
             "name": f"{release}-hpa",
             "namespace": namespace,
-            "annotations": {"llm-d.ai/generated-by": "autoconfig-poc"},
+            "annotations": {"llm-d.ai/generated-by": "autoconfig"},
         },
         "spec": {
             "scaleTargetRef": {
@@ -1945,7 +1945,7 @@ def _render_inference_objective(release: str, namespace: str) -> str:
         "metadata": {
             "name": f"{release}-objective",
             "namespace": namespace,
-            "annotations": {"llm-d.ai/generated-by": "autoconfig-poc"},
+            "annotations": {"llm-d.ai/generated-by": "autoconfig"},
         },
         "spec": {
             "priority": 0,
@@ -1972,7 +1972,7 @@ def _render_inference_model_rewrite(release: str, namespace: str, model: str) ->
         "metadata": {
             "name": f"{release}-rewrite",
             "namespace": namespace,
-            "annotations": {"llm-d.ai/generated-by": "autoconfig-poc"},
+            "annotations": {"llm-d.ai/generated-by": "autoconfig"},
         },
         "spec": {
             "poolRef": {"name": release},

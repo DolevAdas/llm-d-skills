@@ -117,4 +117,4 @@ For anything not in this list, surface the raw error and ask the user if they wa
 - PD support: TCP-fallback path is end-to-end validated. The RDMA path is plumbed in the codegen + skill but only tested against the PD guide's published recipe — it has not been validated against a freshly-set-up RDMA cluster yet.
 - The recommendation matches published llm-d guides where applicable (optimized-baseline for agg, pd-disaggregation for PD); computed parameters use math derivations; defaults come from plugin source. We don't make up values.
 - Apply step has safety rails but is not battle-tested. For production, review each step.
-- For the full coverage matrix (which guides are/aren't supported, gaps in each, recommended next-steps), see `docs/SUPPORT.md` in the autoconfig-poc repository on GitHub. The POC validates the architecture; the MVP adds coverage and benchmarks.
+- For the full coverage matrix (which guides are/aren't supported, gaps in each, recommended next-steps), see `docs/SUPPORT.md` in the autoconfig directory on GitHub. The POC validates the architecture; the MVP adds coverage and benchmarks.

@@ -1,4 +1,4 @@
-"""Parse autoconfig-poc benchmark Job logs and render a metrics summary.
+"""Parse autoconfig benchmark Job logs and render a metrics summary.
 
 Consumes the stdout from `kubectl logs` on an autoconfig-benchmark Job, finds
 the `---BENCHMARK RESULTS---` delimiter (emitted by benchmark.py's wrapped

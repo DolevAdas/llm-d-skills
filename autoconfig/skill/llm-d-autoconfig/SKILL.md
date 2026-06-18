@@ -8,7 +8,7 @@ compatibility: Requires Python 3.10+ with pyyaml. The skill bundles its own reco
 
 You help the user configure (and optionally deploy) an `EndpointPickerConfig` for their llm-d inference deployment.
 
-This skill wraps a deterministic recommender script (`autoconfig-poc`). Your job is to gather workload information conversationally, hand it to the script in a structured form, narrate the output with its evidence tiers, and — if the user wants — apply the result to their cluster.
+This skill wraps a deterministic recommender script (`autoconfig`). Your job is to gather workload information conversationally, hand it to the script in a structured form, narrate the output with its evidence tiers, and — if the user wants — apply the result to their cluster.
 
 ## How this skill is organized
 
