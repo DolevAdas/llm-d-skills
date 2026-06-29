@@ -260,7 +260,7 @@ kubectl get pods -n $NAMESPACE | grep -i vllm | awk '{print "pod/"$1}'
 Locate the directory the llmdbenchmark uses in the workspace. Collect and save logs:
 
 ```bash
-mkdir -p <benchmark-dir>/logs
+mkdir -p <benchmark-dir>/vllm-logs
 for pod in $(kubectl get pods -n $NAMESPACE -l llm-d.ai/role=decode -o name 2>/dev/null); do
   pname=$(echo $pod | sed 's|pod/||')
   kubectl logs -n $NAMESPACE $pname --timestamps \

@@ -113,7 +113,8 @@ Store generated files under local directory comparison dir.
 
 Tell the user: *"Stack is up — running benchmark for Run A."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. When the skill asks where to save results, use:
+Follow the **run-llm-d-benchmark** skill workflow, provide it with custom workspace directory `$COMPARISON_DIR/run-a`.
+If Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. When the skill asks where to save results, use:
 
 ```
 $COMPARISON_DIR/run-a/results
@@ -149,13 +150,13 @@ Make sure `results_path` points to the `results` directory created in Step 1.2. 
 
 ### 1.4 Verify vLLM Logs Collected
 
-Before proceeding to teardown, ensure vLLM pod logs have been collected. The **run-llm-d-benchmark** skill should have collected these during Step 11, but verify they exist:
+Before proceeding to teardown, ensure vLLM pod logs have been collected. The **run-llm-d-benchmark** skill should have collected these during Step 12, but verify they exist:
 
 ```bash
-# Check if logs directory exists and has content
-if [ ! -d "$COMPARISON_DIR/run-a/results/logs" ] || [ -z "$(ls -A $COMPARISON_DIR/run-a/results/logs 2>/dev/null)" ]; then
-  echo "vLLM logs not found in results/logs/ — collecting now before teardown..."
-  mkdir -p $COMPARISON_DIR/run-a/results/logs
+# Check if vllm-logs directory exists and has content
+if [ ! -d "$COMPARISON_DIR/run-a/results/vllm-logs" ] || [ -z "$(ls -A $COMPARISON_DIR/run-a/results/vllm-logs 2>/dev/null)" ]; then
+  echo "vLLM logs not found in vllm-logs/ — collecting now before teardown..."
+  mkdir -p $COMPARISON_DIR/run-a/results/vllm-logs
   
   # Try different label selectors to find vLLM pods
   vllm_pods=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=vllm -o name 2>/dev/null)
@@ -168,11 +169,11 @@ if [ ! -d "$COMPARISON_DIR/run-a/results/logs" ] || [ -z "$(ls -A $COMPARISON_DI
   
   for pod in $vllm_pods; do
     pod_name=$(echo $pod | sed 's|pod/||')
-    kubectl logs -n $NAMESPACE $pod --timestamps > "$COMPARISON_DIR/run-a/results/logs/${pod_name}.log" 2>&1
+    kubectl logs -n $NAMESPACE $pod --timestamps > "$COMPARISON_DIR/run-a/results/vllm-logs/${pod_name}.log" 2>&1
     echo "Collected logs from $pod_name"
   done
 else
-  echo "vLLM logs already collected in results/logs/"
+  echo "vLLM logs already collected in results/vllm-logs"
 fi
 ```
 
@@ -210,7 +211,8 @@ Store generated files under local directory comparison dir.
 
 Tell the user: *"Stack is up — running benchmark for Run B."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. Results path:
+Follow the **run-llm-d-benchmark** skill workflow, provide it with WORKSPACE_DIR=$COMPARISON_DIR/run-b.
+If Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. Results path:
 
 ```
 $COMPARISON_DIR/run-b/results
@@ -232,7 +234,7 @@ Same constraints as Phase 1.5: verify logs collected, then remove Helm releases 
 
 ### 3.1 Extract Key Metrics
 
-Read the benchmark result files from both `run-a/results` and `run-b/results`. The exact file format depends on the harness used:
+Locate and read the benchmark result files from both `run-a/results` and `run-b/results` (Look for benchmark dir if needed). The exact file format depends on the harness used:
 
 - **inference-perf** / **vllm-benchmark**: typically CSV or JSON with per-request timing
 - **guidellm**: produces a summary JSON with aggregated percentiles
