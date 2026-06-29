@@ -80,7 +80,7 @@ If auto-detection finds nothing, List available services in the namespace to hel
 ### Step 4: Confirm the Model Name
 
 The `--model` flag must match exactly what the server reports.
-Check which models are available in the stack deployment by quering ${ENDPOINT_URL}/v1/models or looking at the decoders helm deployment.
+Check which models are available in the stack deployment by querying ${ENDPOINT_URL}/v1/models or looking at the decoders helm deployment.
 Set `MODEL` to the exact string returned (e.g. `Qwen/Qwen3-32B`, `openai/gpt-oss-120b`). If multiple models are returned, ask the user to select one.
 
 > **Common error**: `"did not return expected model 'X'"` means there is a mismatch — always confirm the model name from the live endpoint.
