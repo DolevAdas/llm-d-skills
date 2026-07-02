@@ -403,7 +403,7 @@ The script should:
 - Export all environment variables used (`NAMESPACE`, `BENCHMARK_PVC`, `GATEWAY_SVC`, `RUN_A_LABEL`, `RUN_B_LABEL`, `COMPARISON_DIR`)
 - Echo a header block explaining what the comparison was and when it was generated
 - Show the benchmark config file contents (or the path to the config YAML that was used) for each run, in commented form so it's readable but not executed accidentally
-- Include the actual `run_only.sh` invocation commands used for each run, ready to be uncommented and re-run
+- Include the actual `llmdbenchmark` invocation commands used for each run, ready to be uncommented and re-run
 - Remind the user at the top that this is a reference/reproduction script and they should review it before running
 
 Example structure (fill in actual values from the comparison):
@@ -430,7 +430,7 @@ export COMPARISON_DIR="<absolute path>"
 #
 # To reproduce Run A:
 #   mkdir -p $COMPARISON_DIR/run-a/results
-#   ./run_only.sh -c <path-to-run-a-config.yaml>
+#   llmdbenchmark command
 
 # --- Run B: <RUN_B_LABEL> ---
 # Config used:
@@ -438,7 +438,7 @@ export COMPARISON_DIR="<absolute path>"
 #
 # To reproduce Run B:
 #   mkdir -p $COMPARISON_DIR/run-b/results
-#   ./run_only.sh -c <path-to-run-b-config.yaml>
+#   llmdbenchmark command
 
 # --- Re-generate comparison report ---
 # python $COMPARISON_DIR/analyze_results.py $COMPARISON_DIR
