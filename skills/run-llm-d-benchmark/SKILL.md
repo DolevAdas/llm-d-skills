@@ -60,7 +60,7 @@ Verify that the stack is indeed deployed in the detected or provided namespace u
 
 Determine if the user wants to run an existing/modified guide workload or a custom workload
 - **Guide mode**: If guide name provided (e.g. `optimized-baseline`, `pd-disaggregation`). Set `GUIDE_NAME`. This maps to `--spec guides/${GUIDE_NAME}` and narrows the profile list in Step 5.
-- **Custom workload mode**: `GUIDE_NAME` is unset. The user will supply the endpoint URL directly in Step 3 and the workload profile path in Step 5.
+- **Custom workload mode**: `GUIDE_NAME` is unset. The user will supply the endpoint URL directly in Step 3 and the workload profile path in Step 6.
 ---
 
 ### Step 3: Resolve the Endpoint and Gateway Class
@@ -100,8 +100,10 @@ Ask the user for a harness to use, the available harnesses are:
 
 #### Option A: User provides a custom profile path
 
-If the user provided a custom workload profile path, use it (copy it into `workload/profiles/${HARNESS:-inference-perf}/` if needed).
-Set `WORKLOAD_PROFILE=custom_profile.yaml`. Always pass the `.yaml` form to `--workload`.
+If the user provided a custom workload profile path, first verify it's content is a workload.
+If not, extract relevant workload.<name> section to <name>.yaml file to create a custom profile file.
+Next, copy it into `workload/profiles/${HARNESS:-inference-perf}/` if needed.
+Set `WORKLOAD_PROFILE=<custom_profile.yaml>`. Always pass the `.yaml` form to `--workload`.
 
 #### Option B: Pick from shipped profiles
 
@@ -182,26 +184,9 @@ For slow clusters or first-time image pulls, extend to:
 
 Display the full command to the user for review, then run it.
 
-**Guide mode** (`GUIDE_NAME` is set — includes `--spec`):
 ```bash
 llmdbenchmark \
     --spec           guides/${GUIDE_NAME} \
-    ${WORKSPACE_DIR:+--workspace "${WORKSPACE_DIR}"} \
-    run \
-    --endpoint-url   "${ENDPOINT_URL}" \
-    --gateway-class  "${GATEWAY_CLASS}" \
-    --model          "${MODEL}" \
-    --namespace      "${NAMESPACE}" \
-    --harness        ${HARNESS:-inference-perf} \
-    --workload       ${WORKLOAD_PROFILE} \
-    ${OVERRIDES:+--overrides "${OVERRIDES}"} \
-    --wait-timeout   ${WAIT_TIMEOUT:-3600} \
-    --analyze
-```
-
-**Custom workload mode** (`GUIDE_NAME` is unset — no `--spec`):
-```bash
-llmdbenchmark \
     ${WORKSPACE_DIR:+--workspace "${WORKSPACE_DIR}"} \
     run \
     --endpoint-url   "${ENDPOINT_URL}" \
@@ -300,26 +285,7 @@ The `<run-dir>` is printed early in the CLI output: `Created llmdbenchmark insta
 
 ### Step 14: Display Results Summary
 
-The workspace layout after a completed run:
-
-```
-<workspace>/
-└── run/
-    ├── plan/
-    ├── environment/
-    └── results/
-        └── <experiment-id>/
-            ├── stage_0_lifecycle_metrics.json
-            ├── stage_N_lifecycle_metrics.json
-            ├── summary_lifecycle_metrics.json
-            ├── config.yaml
-            ├── stdout.log / stderr.log
-            └── analysis/
-                └── distributions/
-                    ├── dist_ttft.png
-                    ├── dist_itl.png
-                    └── scatter_ttft_vs_input.png
-```
+Display the workspace layout after a completed run, list main directories and files under `<workspace>/<run-[a,b]>/<experience-id>`
 
 Read `summary_lifecycle_metrics.json` and display a brief results table covering:
 
