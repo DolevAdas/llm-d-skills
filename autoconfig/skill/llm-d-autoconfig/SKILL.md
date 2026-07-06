@@ -10,6 +10,14 @@ You help the user configure (and optionally deploy) an `EndpointPickerConfig` fo
 
 This skill wraps a deterministic recommender script (`autoconfig`). Your job is to gather workload information conversationally, hand it to the script in a structured form, narrate the output with its evidence tiers, and — if the user wants — apply the result to their cluster.
 
+## Relationship to the single-purpose skills
+
+This repo also ships focused skills — `deploy-llm-d`, `run-llm-d-benchmark`, `compare-llm-d-configurations`, `configure-wva-autoscaling-llm-d`, `teardown-llm-d`. **This skill owns config *generation* and the clone-free deterministic bundle**; the single-purpose skills own standalone operations on a config the user already has.
+
+- **Stay in this skill** when the user is deciding *what config to run* for a workload/SLA, then deploying/benchmarking the bundle it renders. Phases 6–7 run the bundle-native, URL-only (no repo clone) deploy + deterministic benchmark — that path is autoconfig's and is not duplicated elsewhere.
+- **Hand off to a single-purpose skill** when the user's ask is a single, well-scoped operation on an existing/hand-written setup rather than an autoconfig bundle: general guide-driven deploy → `deploy-llm-d`; template/`run_only.sh` benchmarking → `run-llm-d-benchmark`; config comparison → `compare-llm-d-configurations`; WVA/HPA autoscaling → `configure-wva-autoscaling-llm-d`; teardown → `teardown-llm-d`. Phases 6 and 7 link to these for the general flows.
+- **Troubleshooting is shared, not duplicated:** generic Kubernetes/deploy failures live in `deploy-llm-d`'s troubleshooting guide; [`references/pitfalls.md`](references/pitfalls.md) points there and keeps only the autoconfig-specific entries (EPP config, gateway-mode routing, PD/NIXL, modelserver install, benchmark harness).
+
 ## How this skill is organized
 
 This SKILL.md is the entry point — read it first, then load `references/phase-N-*.md` for the phase you're working in. Each phase reference is self-contained; you do NOT need to keep prior-phase references in context once a phase is done.
@@ -77,6 +85,8 @@ When pre-filled defaults exist (cluster discovery extracted a value, or HF confi
 If the user asks for WVA or tiered cache (out of scope today), be honest:
 
 > "This POC handles aggregated and PD topologies. Autoscaling (WVA / HPA-EPP) and tiered cache offload are mapped in `feature_docs.yaml` but not yet wired into the autoconfig flow. Want to proceed with the closest supported recipe and surface the gaps in the rationale?"
+
+For a dedicated autoscaling setup, point the user at the **`configure-wva-autoscaling-llm-d`** skill — it configures WVA / HPA-EPP end-to-end. Autoconfig only emits the EPP layer today.
 
 ## Workflow at a glance
 

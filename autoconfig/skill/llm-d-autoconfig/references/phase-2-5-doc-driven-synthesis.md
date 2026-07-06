@@ -36,7 +36,7 @@ Lookup keys are `<category>.<entry>` paths inside `feature_docs.yaml` (snake_cas
 
 If a "Search `plugins.*` for ..." row matches no entry in feature_docs.yaml, treat that as a gap: surface it in the Phase 2.5 `summary` ("No `feature_docs.yaml` entry for X — falling back to best-effort search; please verify before deploying") and either grep the upstream repo for the plugin's README or omit the plugin and ask the user.
 
-Heads-up on the Phase B feature flags: the script today emits an advisory warning per flag pointing at the cited `feature_docs.yaml` entry, but it does NOT auto-emit helm values for the flag's deploy side (modelserver overlay, autoscaler CR, batch gateway, etc.). Your `summary` must call this out — e.g., "WVA enabled — Phase 6 will need a separate `kubectl apply -k` for the WVA operator; this script only handles the EPP layer."
+Heads-up on the Phase B feature flags: the script today emits an advisory warning per flag pointing at the cited `feature_docs.yaml` entry, but it does NOT auto-emit helm values for the flag's deploy side (modelserver overlay, autoscaler CR, batch gateway, etc.). Your `summary` must call this out — e.g., "WVA enabled — Phase 6 will need a separate `kubectl apply -k` for the WVA operator; this script only handles the EPP layer." For a full WVA / HPA setup, the `configure-wva-autoscaling-llm-d` skill handles the autoscaler side end-to-end.
 
 ### Step 2: fetch the docs (cache-aware, BATCH the calls)
 

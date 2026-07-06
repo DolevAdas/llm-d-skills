@@ -2,6 +2,8 @@
 
 *Detailed runbook for SKILL.md Phase 6. Splits into pre-flight (6.0), prereq install (6.1), namespace + secrets (6.2), modelservice install (6.3), EPP install (6.4), Gateway resource (6.5), smoke test (6.6), final report (6.7). Read this only if the user opted into deploy in Phase 5.*
 
+> **Which deploy path is this?** Phase 6 is the **bundle-native, clone-free** deploy for the config autoconfig just generated: everything is fetched from public URLs (no `LLMD_PATH` clone) and applied from the deterministic Phase C bundle. It is intentionally distinct from the `deploy-llm-d` skill, which drives the **general, guide-driven** deploy from a local llm-d clone. If the user isn't deploying an autoconfig-generated bundle — e.g. they want to pick a Well-Lit-Path guide and deploy a hand-written config — hand off to [`deploy-llm-d`](../../../../skills/deploy-llm-d/SKILL.md) instead of running this phase. For generic Kubernetes/deploy errors, consult that skill's [troubleshooting guide](../../../../skills/deploy-llm-d/references/troubleshooting.md); `references/pitfalls.md` covers only the autoconfig-specific cases.
+
 
 **Offer to deploy via the agent's question primitive (yesno) — don't ask if the user wants to walk through the steps themselves.** This skill's whole point is that the agent IS the deployer.
 
@@ -24,7 +26,7 @@ If you're not sure which branch applies, ASK the user: "I see existing resources
 |---|---|
 | Update existing | Phase 6-U |
 | Parallel deployment | Greenfield path with a new release name + namespace; warn that modelserver labels may need to be distinct so the EPP routes correctly |
-| Replace entirely | `helm uninstall` the old release first (with explicit confirmation), then run greenfield path |
+| Replace entirely | `helm uninstall` the old release first (with explicit confirmation), then run greenfield path — or hand off to the `teardown-llm-d` skill for a full-stack teardown |
 
 ### Phase 6-U — Update an existing deployment
 

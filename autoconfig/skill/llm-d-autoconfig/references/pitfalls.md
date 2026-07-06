@@ -2,38 +2,25 @@
 
 *Reference for SKILL.md Phase 6 / Phase 7 error handling. Each entry: symptom → diagnosis → fix. Search before retrying any failed kubectl/helm command.*
 
-
 When an apply step fails or post-deploy validation shows an issue, pattern-match against these. If matched, narrate the diagnosis and offered fix; do not auto-execute the fix.
 
-### HF token Secret missing
-- **Symptom:** vLLM pod CrashLoopBackOff; logs show `401 Unauthorized` from huggingface.co or `Repository not found` for a known-gated model
-- **Diagnosis:** `kubectl get secret <hf-token-secret-name> -n <ns>` returns NotFound, OR secret exists but doesn't contain a valid token
-- **Fix:** `kubectl create secret generic hf-token-secret -n <ns> --from-literal=HF_TOKEN=<your-token>`
+## First check the shared deploy troubleshooting guide
 
-### vLLM pod OOMKilled during model loading
-- **Symptom:** pod exits with `OOMKilled`; events show memory limit exceeded during initial model download / loading
-- **Diagnosis:** `kubectl describe pod <pod>` shows `Reason: OOMKilled`; check `resources.limits.memory`
-- **Fix:** increase `decode.containers[0].resources.limits.memory` in modelservice values; for 32B models on H100, ~80Gi is typical
+**Generic Kubernetes / llm-d deploy + runtime failures are catalogued once in the `deploy-llm-d` skill, not duplicated here.** Before scanning this file, consult the shared troubleshooting guide for the common cases:
 
-### Image pull failure (`ImagePullBackOff`)
-- **Symptom:** pod stuck in `ImagePullBackOff`
-- **Diagnosis:** `kubectl describe pod <pod>` shows the pull error: typically `unauthorized`, `not found`, or `manifest unknown`
-- **Fix:** verify image tag exists; if private registry, ensure `imagePullSecrets` is set in the pod spec
+- **In-repo:** [`skills/deploy-llm-d/references/troubleshooting.md`](../../../../skills/deploy-llm-d/references/troubleshooting.md)
+- **URL (when this skill was copied out standalone):** https://github.com/llm-d-incubation/llm-d-skills/blob/main/skills/deploy-llm-d/references/troubleshooting.md
+
+That guide covers, among others: HuggingFace token / auth failures, pod `OOMKilled`, `ImagePullBackOff`, RBAC-denied applies, namespace mismatches, pod scheduling / GPU-allocation problems, pod explosion from missing kustomize `replicas`, generic Gateway/HTTPRoute routing failures, and the accelerator-family modelserver overlay layout. **This file keeps only the autoconfig-specific entries** — EPP config, EPP gateway-mode routing (istio / GAIE), PD/NIXL, the modelserver install path, and the benchmark harness — that the shared guide does not cover.
+
+---
+
+## Autoconfig-specific entries
 
 ### ConfigMap not mounted in EPP pod
 - **Symptom:** EPP pod logs show `failed to load config: file not found` or similar
 - **Diagnosis:** `kubectl exec <epp-pod> -- ls /config` shows missing files; OR ConfigMap exists but volumeMount points elsewhere
 - **Fix:** check `pluginsConfigFile` value in gaie chart values matches the ConfigMap key; check volumeMount path matches what EPP expects
-
-### Wrong namespace
-- **Symptom:** all resources created but EPP can't find modelservice pods
-- **Diagnosis:** `kubectl get pod -n <epp-ns> -l <selector>` returns nothing; `kubectl get pod --all-namespaces -l <selector>` finds them in another namespace
-- **Fix:** redeploy with consistent namespace, or update the InferencePool selector to cross namespaces
-
-### RBAC denied during apply
-- **Symptom:** `kubectl apply` returns `forbidden: User cannot create resource ... in API group ...`
-- **Diagnosis:** `kubectl auth can-i <verb> <resource> -n <ns>` confirms denial
-- **Fix:** user needs the role granted by their cluster admin; provide the specific RBAC rule needed in plain language; do not attempt to escalate privileges
 
 ### precise-prefix-cache silent miss
 - **Symptom:** EPP deployed; metrics show prefix-cache hit rate near 0 even for repeated identical prompts
@@ -67,20 +54,10 @@ When an apply step fails or post-deploy validation shows an issue, pattern-match
   istioctl install -y --set values.pilot.env.ENABLE_GATEWAY_API_INFERENCE_EXTENSION=true
   ```
 
-### Gateway not Ready
-- **Symptom:** `kubectl get gateway -n <ns>` shows `Programmed: False`
-- **Diagnosis:** check the gateway's `conditions[]` for the actual error
-- **Fix:** depends on gateway provider; surface the message verbatim and suggest the user consult their gateway provider docs
-
 ### Helm chart pull fails with 403 (`llm-d-incubation/llm-d-modelservice`)
 - **Symptom:** `helm install ms-... oci://ghcr.io/llm-d-incubation/llm-d-modelservice/...` returns `unexpected status code 403: denied: requested access to the resource is denied`
 - **Diagnosis:** the modelserver is NOT installed via Helm in the current optimized-baseline guide. The `llm-d-modelservice` Helm chart exists as a separate project but isn't the canonical install path. The current guide uses `kubectl apply -k` against Kustomize overlays (see Phase 6.3).
-- **Fix:** abandon the Helm install. Re-run Phase 6.3 using `kubectl apply -k "https://github.com/llm-d/llm-d.git/guides/optimized-baseline/modelserver/<accelerator>/vllm/?ref=main"` — kubectl's `-k` flag accepts public git URLs and clones into a temporary working directory; no local repo needed.
-
-### Modelserver overlay path 404 (`h100/`, `h200/`, etc.)
-- **Symptom:** `curl` against `raw.githubusercontent.com/.../optimized-baseline/modelserver/h100/vllm/values.yaml` returns 404. Same for h200, a100, etc.
-- **Diagnosis:** `optimized-baseline/modelserver/` is laid out by accelerator FAMILY (`gpu/`, `amd/`, `hpu/`, `tpu-v6/`, `tpu-v7/`, `xpu/`, `cpu/`), NOT by GPU model. H100, H200, A100, B200 all share the same `gpu/vllm/` overlay.
-- **Fix:** use `gpu/vllm/` for any NVIDIA GPU. See Phase 6.3's hardware table for the full mapping. There is no per-GPU-model granularity in the current layout.
+- **Fix:** abandon the Helm install. Re-run Phase 6.3 using `kubectl apply -k "https://github.com/llm-d/llm-d.git/guides/optimized-baseline/modelserver/<accelerator>/vllm/?ref=main"` — kubectl's `-k` flag accepts public git URLs and clones into a temporary working directory; no local repo needed. (See the shared deploy troubleshooting for the accelerator-FAMILY overlay layout — H100/H200/A100/B200 all share `gpu/vllm/`.)
 
 ### NIXL silent TCP fallback (PD)
 - **Symptom:** PD prefill + decode pods start cleanly; throughput is worse than agg on the same hardware. EPP routes correctly, but inter-pod latency is dominated by KV transfer time.
@@ -107,7 +84,7 @@ When an apply step fails or post-deploy validation shows an issue, pattern-match
 - **Diagnosis:** vLLM with `--kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both"}'` requires the env var `VLLM_NIXL_SIDE_CHANNEL_HOST` set to the pod's IP. The PD base kustomization sets this from `status.podIP` via `valueFrom.fieldRef`. If a custom patch removed the env vars list (rather than appending), the var is missing.
 - **Fix:** ensure the env var is present on both the prefill and decode containers. Inspect with `kubectl get deployment <pd-prefill> -o yaml | grep -A4 VLLM_NIXL_SIDE_CHANNEL_HOST`. If absent, re-apply the base PD overlay (it sets this) or patch it back in.
 
-For anything not in this list, surface the raw error and ask the user if they want to investigate further.
+For anything not in this list, check the shared deploy troubleshooting guide (linked above); if it's not there either, surface the raw error and ask the user if they want to investigate further.
 
 ---
 

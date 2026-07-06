@@ -17,6 +17,22 @@ EPP/Router code is at [`llm-d/llm-d-router`](https://github.com/llm-d/llm-d-rout
 
 ---
 
+## When to use this vs. the single-purpose skills
+
+This repo also ships focused, single-purpose skills under [`skills/`](../skills/) — `deploy-llm-d`, `run-llm-d-benchmark`, `compare-llm-d-configurations`, `configure-wva-autoscaling-llm-d`, `teardown-llm-d`. They each perform **one** operation you already know you want. **autoconfig is different: it's the guided workflow for deciding *what config to run* in the first place**, then rendering and (optionally) deploying/benchmarking it.
+
+Reach for **autoconfig** when you have a workload + SLA and need a recommendation → deployable bundle → cluster. Reach for a **single-purpose skill** when the decision is already made and you just need to deploy / benchmark / compare / autoscale / tear down.
+
+**How they relate (no overlap by design):**
+
+- **Config generation + the deterministic bundle are autoconfig's alone.** autoconfig deliberately never clones a repo — every upstream artifact is fetched from a public URL (so the skill is portable across agents), and its Phase C bundle (`helm template` → raw YAMLs → `kubectl apply`) is byte-deterministic per input. That clone-free, bundle-native deploy/benchmark path is what Phases 6–7 run.
+- **The single-purpose skills own the general, guide-driven flows.** `deploy-llm-d` (guide discovery from a local `LLMD_PATH` clone) and `run-llm-d-benchmark` (`run_only.sh` + templates) are the tools when you're operating on a hand-written or pre-existing setup rather than an autoconfig-generated bundle. Phases 6–7 link out to them for those general cases.
+- **Troubleshooting lives in one place.** Generic Kubernetes/deploy/runtime failures are catalogued in [`deploy-llm-d`'s troubleshooting guide](../skills/deploy-llm-d/references/troubleshooting.md); autoconfig's [`pitfalls.md`](skill/llm-d-autoconfig/references/pitfalls.md) points there and keeps only EPP/PD/NIXL/bundle/benchmark-specific entries.
+
+**For code assistants:** activate this skill (autoconfig) when the user asks *what config to use*, *how to set up llm-d for a workload / SLA*, or *how to tune the EPP scheduler*. For a single named operation on an already-decided stack — deploy, benchmark, compare, autoscale, or tear down — activate the matching single-purpose skill instead (see the "Relationship to the single-purpose skills" section in [`SKILL.md`](skill/llm-d-autoconfig/SKILL.md)).
+
+---
+
 ## Getting started
 
 The skill works with any agent that loads agentskills.io-format skills including Gemini CLI, Claude Code, or any agent that follows the `SKILL.md` + `references/` + `scripts/` layout.
