@@ -438,7 +438,7 @@ benchmarks:
       - https://github.com/vllm-project/guidellm/blob/main/Containerfile
 
   llm_d_benchmark:
-    summary: "Wrapper image bundling guidellm + inference-perf + others. Driven by run_only.sh; canonical for the guides."
+    summary: "Wrapper image bundling guidellm + inference-perf + others. Now driven by the llmdbenchmark CLI (run_only.sh is the older path); canonical for the guides."
     main: https://github.com/llm-d/llm-d-benchmark/blob/main/README.md
     secondary:
       - https://raw.githubusercontent.com/llm-d/llm-d-benchmark/main/existing_stack/run_only.sh
