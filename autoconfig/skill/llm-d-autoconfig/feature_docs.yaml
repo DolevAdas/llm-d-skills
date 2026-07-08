@@ -1,0 +1,684 @@
+# feature_docs.yaml — the single source-of-truth URL map, tracking llm-d main.
+# URLs point at the rolling main branch, so the agent always reads current
+# upstream docs. (The renderer/chart install stay on a pinned path; engine-aware
+# or specific-upstream installs are a "target a branch + install the router
+# chart manually" escape hatch — see references/phase-6-deploy.md.)
+#
+# The agent consults these docs when making recommendations. NEVER rely on
+# this SKILL's hardcoded prose for "which plugins go in workload X" or
+# "is feature A compatible with feature B" — the docs are the source of truth.
+#
+# Schema:
+#   <category>:
+#     <key>:
+#       main:       <single URL — the agent ALWAYS reads this when the category/key is in scope>
+#       secondary:  <list of URLs — the agent reads on demand when main isn't enough>
+#       summary:    <one-line description for the agent's category-pick step>
+#
+# Cache: fetched docs land in <skill-install-dir>/cache/docs/.
+# Verifier: scripts/verify_doc_map.py HTTP-checks every URL.
+
+meta:
+  skill_version: "0.3.1-dev"
+  schema_version: 1
+  # Bump skill_version to invalidate cache + force re-fetch of all docs.
+  #
+  # Source-priority convention:
+  #   - llm-d.ai/docs/...                  → high-level concept + decision docs (PRIMARY for "what does this feature do?")
+  #   - github.com/llm-d/llm-d/guides/...  → step-by-step deploy recipes (PRIMARY for "how do I install this?")
+  #   - github.com/llm-d/<implementation-repo>/...  → code-level details (SECONDARY)
+  #   - github.com/llm-d/llm-d-router/.../<plugin>/README.md → per-plugin tuning (SECONDARY for individual plugin params)
+  #
+  # Deprecated repos (do NOT reference; they redirect or are unmaintained):
+  #   - llm-d/llm-d-deployer (was monolithic helm; replaced by per-component charts)
+  #   - llm-d/llm-d-model-service (replaced by ModelService Helm chart proposal in llm-d/llm-d/docs/proposals/)
+  #   - llm-d/llm-d-routing-sidecar (code moved to llm-d-router/cmd/pd-sidecar + pkg/sidecar)
+  #   - llm-d/llm-d-inference-scheduler (renamed to llm-d-router; EPP code + InferenceObjective/InferenceModelRewrite APIs merged in)
+  #   - kubernetes-sigs/llm-instance-gateway (active development moved to llm-d-router; Python latency-predictor service split out to llm-d/llm-d-latency-predictor)
+
+# ---------------------------------------------------------------------------
+# Architecture concept docs (llm-d.ai/docs/architecture/...) — PRIMARY for
+# "what does this feature do?" and "how does it work?". Read these BEFORE
+# the deploy guide to understand the design rationale.
+# ---------------------------------------------------------------------------
+architecture:
+  overview:
+    summary: "Top-level llm-d architecture: Router, InferencePool, Model Server."
+    main: https://llm-d.ai/docs/architecture
+    secondary: []
+
+  router:
+    summary: "L7 proxy (typically Envoy) + EPP. The intelligent entry point for inference requests."
+    main: https://llm-d.ai/docs/architecture/core/router
+    secondary:
+      - https://github.com/llm-d/llm-d-router/blob/main/README.md
+
+  inferencepool:
+    summary: "LLM-optimized Service grouping pods with identical model/compute configs."
+    main: https://llm-d.ai/docs/architecture/core/inferencepool
+    secondary: []
+
+  model_servers:
+    summary: "Inference engines (vLLM, SGLang) running on accelerators."
+    main: https://llm-d.ai/docs/architecture/core/model-servers
+    secondary: []
+
+  disaggregation:
+    summary: "Disaggregated serving (Prefill/Decode). Architectural deep-dive."
+    main: https://llm-d.ai/docs/architecture/advanced/disaggregation
+    secondary:
+      - https://llm-d.ai/docs/architecture/advanced/disaggregation/operations-vllm
+
+  latency_predictor_arch:
+    summary: "Latency Predictor sidecar architecture (XGBoost online training)."
+    main: https://llm-d.ai/docs/architecture/advanced/latency-predictor
+    secondary:
+      - https://github.com/llm-d/llm-d-latency-predictor/blob/main/README.md
+
+  kv_management:
+    summary: "KV cache management subsystems (prefix-cache-aware-routing, indexer, offloader)."
+    main: https://llm-d.ai/docs/architecture/advanced/kv-management
+    secondary:
+      - https://llm-d.ai/docs/architecture/advanced/kv-management/prefix-cache-aware-routing
+      - https://llm-d.ai/docs/architecture/advanced/kv-management/kv-indexer
+      - https://llm-d.ai/docs/architecture/advanced/kv-management/kv-offloader
+      - https://github.com/llm-d/llm-d-kv-cache/blob/main/README.md
+
+  autoscaling_arch:
+    summary: "Autoscaling architecture overview (WVA + HPA-EPP)."
+    main: https://llm-d.ai/docs/architecture/advanced/autoscaling
+    secondary:
+      - https://llm-d.ai/docs/architecture/advanced/autoscaling/workload-variant-autoscaling
+      - https://llm-d.ai/docs/architecture/advanced/autoscaling/igw-hpa
+      - https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/README.md
+
+  batch_arch:
+    summary: "Batch + async-processing architecture."
+    main: https://llm-d.ai/docs/architecture/advanced/batch
+    secondary:
+      - https://llm-d.ai/docs/architecture/advanced/batch/batch-gateway
+      - https://llm-d.ai/docs/architecture/advanced/batch/async-processor
+
+  glossary:
+    summary: "Authoritative llm-d terminology. Use this to disambiguate when terms collide."
+    main: https://llm-d.ai/docs/api-reference/glossary
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# Top-level llm-d well-lit-path guides (one per feature/topology) — PRIMARY
+# for "how do I install this?". Pair with the architecture page above for
+# "why" + "what" context.
+# ---------------------------------------------------------------------------
+guides:
+  optimized_baseline:
+    summary: "Aggregated topology, prefix-cache-aware routing. The default starting point."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/optimized-baseline/README.md
+    secondary:
+      - https://github.com/llm-d/llm-d/blob/main/guides/optimized-baseline/router/optimized-baseline.values.yaml
+      - https://github.com/llm-d/llm-d/blob/main/guides/recipes/router/base.values.yaml
+      - https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline/modelserver
+      - https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline/benchmark-results
+
+  pd_disaggregation:
+    summary: "Prefill/Decode disaggregation. Best for medium-large models, longer ISL, sparse MoE."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/pd-disaggregation/README.md
+    secondary:
+      - https://github.com/llm-d/llm-d/blob/main/guides/pd-disaggregation/router/pd-disaggregation.values.yaml
+      - https://github.com/llm-d/llm-d/tree/main/guides/pd-disaggregation/modelserver
+      - https://github.com/llm-d/llm-d/tree/main/guides/pd-disaggregation/benchmark-templates
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/profilehandler/disagg/README.md
+
+  predicted_latency_based_scheduling:
+    summary: "Per-pod TTFT/TPOT prediction via XGBoost sidecars; SLO-aware routing."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/predicted-latency-routing/README.md
+    secondary:
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency/README.md
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/latency/README.md
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/admitter/latencyslo/README.md
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/filter/sloheadroomtier/README.md
+
+  precise_prefix_cache_aware:
+    summary: "KV-events-driven precise prefix cache scoring. Higher hit rates than approximation."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/precise-prefix-cache-routing/README.md
+    secondary:
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/preciseprefixcache/README.md
+
+  tiered_prefix_cache:
+    summary: "KV cache offload to CPU/SSD/remote FS for longer effective context."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/tiered-prefix-cache/README.md
+    secondary: []
+
+  wide_ep_lws:
+    summary: "Wide expert parallelism (LeaderWorkerSet) for sparse MoE models."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/wide-ep-lws/README.md
+    secondary: []
+
+  workload_autoscaling:
+    summary: "Runtime replica autoscaling — index for the two sub-options below."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/workload-autoscaling/README.md
+    secondary:
+      - https://llm-d.ai/docs/architecture/advanced/autoscaling
+
+  workload_autoscaling_wva:
+    summary: "WVA — cost-optimized autoscaler that picks the best variant across heterogeneous accelerators."
+    main: https://llm-d.ai/docs/architecture/advanced/autoscaling/workload-variant-autoscaling
+    secondary:
+      - https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/README.md
+
+  workload_autoscaling_hpa:
+    summary: "HPA-EPP — vanilla HPA driven by EPP-emitted Prometheus metrics. Simpler, less optimal."
+    main: https://llm-d.ai/docs/architecture/advanced/autoscaling/igw-hpa
+    secondary: []
+
+  flow_control:
+    summary: "Admission/queueing layer with priority bands."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/flow-control/README.md
+    secondary:
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/flowcontrol/ordering/README.md
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/flowcontrol/fairness/README.md
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/flowcontrol/usagelimits/README.md
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/flowcontrol/saturationdetector/concurrency/README.md
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/flowcontrol/saturationdetector/utilization/README.md
+
+  batch_gateway:
+    summary: "Batch inference (long-running, async-style requests)."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/batch-gateway/README.md
+    secondary: []
+
+  asynchronous_processing:
+    summary: "Background/long-running request processing."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/asynchronous-processing/README.md
+    secondary: []
+
+  guides_index:
+    summary: "Index of all well-lit-path guides (browse to discover new features)."
+    main: https://github.com/llm-d/llm-d/blob/main/guides/README.md
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# EPP plugins, keyed by config type name. The agent references these when
+# the user asks "what does scorer X do?" or "how do I tune Y?", and when
+# synthesizing recommendations from a workload-class doc.
+# ---------------------------------------------------------------------------
+plugins:
+  # Scorers
+  active_request_scorer:
+    summary: "Scores by in-flight request count + per-request timeout."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/activerequest/README.md
+    secondary: []
+
+  context_length_aware_scorer:
+    summary: "Filter/scorer based on max model context length per pod."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/contextlengthaware/README.md
+    secondary: []
+
+  kv_cache_utilization_scorer:
+    summary: "Scores by per-pod KV cache utilization (lower is better)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/kvcacheutilization/README.md
+    secondary: []
+
+  latency_scorer:
+    summary: "Scores by predicted TTFT/TPOT headroom (consumes predicted-latency-producer)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/latency/README.md
+    secondary: []
+
+  loadaware_scorer:
+    summary: "Threshold-based load scoring (saturation detection)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/loadaware/README.md
+    secondary: []
+
+  lora_affinity_scorer:
+    summary: "Scores by LoRA adapter affinity per pod."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/loraaffinity/README.md
+    secondary: []
+
+  no_hit_lru_scorer:
+    summary: "LRU-based fallback for prefix-cache misses."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/nohitlru/README.md
+    secondary: []
+
+  precise_prefix_cache_scorer:
+    summary: "KV-events-driven precise prefix cache scoring."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/preciseprefixcache/README.md
+    secondary: []
+
+  prefix_cache_scorer:
+    summary: "Approximated prefix cache hit scoring."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/prefix/README.md
+    secondary: []
+
+  queue_depth_scorer:
+    summary: "Scores by per-pod queue depth."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/queuedepth/README.md
+    secondary: []
+
+  running_requests_scorer:
+    summary: "Scores by running request count."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/runningrequests/README.md
+    secondary: []
+
+  session_affinity_scorer:
+    summary: "Sticky routing by session token."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/sessionaffinity/README.md
+    secondary: []
+
+  token_load_scorer:
+    summary: "Token-throughput-based load scoring."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/tokenload/README.md
+    secondary: []
+
+  # Filters
+  by_label_filter:
+    summary: "Filter pods by Kubernetes label (used as basis for prefill-filter, decode-filter, encode-filter)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/filter/bylabel/README.md
+    secondary: []
+
+  prefix_cache_affinity_filter:
+    summary: "Sticky routing by prefix-cache hit (with TTFT load-gate fallback)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/filter/prefixcacheaffinity/README.md
+    secondary: []
+
+  slo_headroom_tier_filter:
+    summary: "Tiers candidates by positive/negative SLO headroom (consumes predicted-latency-producer)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/filter/sloheadroomtier/README.md
+    secondary: []
+
+  # Pickers
+  max_score_picker:
+    summary: "Picks the endpoint with the highest combined score."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/picker/maxscore/README.md
+    secondary: []
+
+  weighted_random_picker:
+    summary: "Probabilistic pick weighted by score (avoids hot-spotting under affinity)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/picker/weightedrandom/README.md
+    secondary: []
+
+  random_picker:
+    summary: "Uniform random pick (testing baseline)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/picker/random/README.md
+    secondary: []
+
+  # Profile handlers
+  single_profile_handler:
+    summary: "Single scheduling profile (the agg path)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/profilehandler/single/README.md
+    secondary: []
+
+  disagg_profile_handler:
+    summary: "Multi-profile orchestration for E/P/D / EPD / E/PD disaggregation."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/profilehandler/disagg/README.md
+    secondary: []
+
+  dataparallel_profile_handler:
+    summary: "Data-parallel scheduling (deprecated; use single-profile-handler with Istio ≥ 1.28.1)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/profilehandler/dataparallel/README.md
+    secondary: []
+
+  # Data producers
+  predicted_latency_producer:
+    summary: "Trains XGBoost models via sidecar; emits per-endpoint TTFT/TPOT predictions. PD-aware via endpointRoleLabel."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency/README.md
+    secondary:
+      - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency/latencypredictorclient/README.md
+
+  approximate_prefix_producer:
+    summary: "Approximated prefix-cache index (consumed by prefix-cache-scorer + no-hit-lru)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/approximateprefix/README.md
+    secondary: []
+
+  inflight_load_producer:
+    summary: "Tracks in-flight load per endpoint."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/inflightload/README.md
+    secondary: []
+
+  tokenizer_producer:
+    summary: "Tokenizer cache for shared tokenization across plugins."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/tokenizer/README.md
+    secondary: []
+
+  # Admitters
+  latency_slo_admitter:
+    summary: "Rejects sheddable requests when no endpoint can meet SLO."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/admitter/latencyslo/README.md
+    secondary: []
+
+  # Request attribute reporter
+  request_attribute_reporter:
+    summary: "Emits per-request metrics."
+    main: https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/requestattributereporter/README.md
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# Gateway providers (Phase 6.1 install branches)
+# ---------------------------------------------------------------------------
+gateway_providers:
+  istio:
+    summary: "Self-hosted istio gateway controller. Required for service mesh integration."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/istio.md
+    secondary:
+      - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/istio/kustomization.yaml
+      - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/istio/gateway.yaml
+      - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/istio/configmap.yaml
+
+  gke:
+    summary: "GKE managed L7 LB. Internal (gke-l7-rilb) or external (gke-l7-regional-external-managed)."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/gke.md
+    secondary:
+      - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/gke-l7-rilb/kustomization.yaml
+      - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/gke-l7-regional-external-managed/kustomization.yaml
+      - https://cloud.google.com/kubernetes-engine/docs/how-to/deploying-gateways
+
+  agentgateway:
+    summary: "Rust-based AI gateway purpose-built for LLM/MCP/A2A workloads."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/agentgateway.md
+    secondary:
+      - https://github.com/llm-d/llm-d/blob/main/guides/recipes/gateway/agentgateway/kustomization.yaml
+
+  index:
+    summary: "Browse all gateway provider options."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/gateway/README.md
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# Cluster infrastructure providers (CSP-specific gotchas)
+# ---------------------------------------------------------------------------
+infra_providers:
+  gke:
+    summary: "GKE-specific: RDMA on A3 Ultra/A4, gIB, multi-net, NCCL, Gateway API."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/gke/README.md
+    secondary:
+      - https://cloud.google.com/ai-hypercomputer/docs/create/gke-ai-hypercompute-custom
+
+  aks:
+    summary: "Azure Kubernetes Service."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/aks/README.md
+    secondary: []
+
+  digitalocean:
+    summary: "DigitalOcean Kubernetes."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/digitalocean/README.md
+    secondary: []
+
+  minikube:
+    summary: "Local minikube (testing)."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/minikube/README.md
+    secondary: []
+
+  openshift:
+    summary: "OpenShift on-prem."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/openshift/README.md
+    secondary: []
+
+  openshift_aws:
+    summary: "OpenShift on AWS."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/openshift-aws/README.md
+    secondary: []
+
+  index:
+    summary: "Browse infra-provider docs."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/README.md
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# Benchmark harnesses
+# ---------------------------------------------------------------------------
+benchmarks:
+  inference_perf:
+    summary: "Native inference-perf binary; flat config schema; required for shared-prefix synthesis."
+    main: https://github.com/kubernetes-sigs/inference-perf/blob/main/README.md
+    secondary:
+      - https://github.com/kubernetes-sigs/inference-perf/blob/main/config.yml
+      - https://github.com/kubernetes-sigs/inference-perf/tree/main/deploy/inference-perf
+
+  guidellm:
+    summary: "Native guidellm CLI; simpler invocation; CLI-flag-driven (no YAML)."
+    main: https://github.com/vllm-project/guidellm/blob/main/README.md
+    secondary:
+      - https://github.com/vllm-project/guidellm/blob/main/Containerfile
+
+  llm_d_benchmark:
+    summary: "Wrapper image bundling guidellm + inference-perf + others. Now driven by the llmdbenchmark CLI (run_only.sh is the older path); canonical for the guides."
+    main: https://github.com/llm-d/llm-d-benchmark/blob/main/README.md
+    secondary:
+      - https://raw.githubusercontent.com/llm-d/llm-d-benchmark/main/existing_stack/run_only.sh
+
+# ---------------------------------------------------------------------------
+# Helm charts (used by deploy steps; agent reads to understand what gets rendered)
+# ---------------------------------------------------------------------------
+charts:
+  router_gateway:
+    summary: "llm-d-router-gateway chart (gateway mode). Renders InferencePool + EPP + optional HTTPRoute behind a Gateway."
+    main: https://github.com/llm-d/llm-d-router/blob/main/config/charts/llm-d-router-gateway/values.yaml
+    secondary:
+      - https://github.com/llm-d/llm-d-router/tree/main/config/charts/llm-d-router-gateway/templates
+
+  router_standalone:
+    summary: "llm-d-router-standalone chart. Renders EPP with Envoy sidecar, no Gateway."
+    main: https://github.com/llm-d/llm-d-router/blob/main/config/charts/llm-d-router-standalone/values.yaml
+    secondary: []
+
+  routerlib_values:
+    summary: "Shared routerlib chart values (sets defaults for latencyPredictor, etc.)."
+    main: https://github.com/llm-d/llm-d-router/blob/main/config/charts/routerlib/values.yaml
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# EPP config schema source-of-truth
+# ---------------------------------------------------------------------------
+schemas:
+  endpoint_picker_config:
+    summary: "EndpointPickerConfig CRD-shaped struct. Authoritative field definitions."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/api-reference/endpointpickerconfig.md
+    secondary:
+      - https://github.com/llm-d/llm-d-router/blob/main/apix/config/v1alpha1/endpointpickerconfig_types.go
+
+  inferencepool_crd:
+    summary: "InferencePool CRD spec."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/api-reference/inferencepool.md
+    secondary: []
+
+  inferenceobjective_crd:
+    summary: "InferenceObjective CRD spec (declares per-model SLO targets)."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/api-reference/inferenceobjective.md
+    secondary: []
+
+  inferencemodelrewrite_crd:
+    summary: "InferenceModelRewrite CRD spec (model-name remapping)."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/api-reference/inferencemodelrewrite.md
+    secondary: []
+
+  epp_http_headers:
+    summary: "HTTP headers the EPP recognizes (used by PD routing, request priority, etc.)."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/api-reference/epp-http-headers.md
+    secondary: []
+
+  glossary:
+    summary: "Terminology reference. Disambiguates 'inference pool' vs 'gateway' vs 'EPP' etc."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/api-reference/glossary.md
+    secondary:
+      - https://llm-d.ai/docs/api-reference/glossary
+
+# ---------------------------------------------------------------------------
+# Concept docs that complement the guide READMEs ("should I use this feature?"
+# vs the guides' "how do I install it?"). docs/well-lit-paths/<name>.md is
+# typically what gets rendered at llm-d.ai/docs/guides/<name>.
+# ---------------------------------------------------------------------------
+concept_docs:
+  optimized_baseline_concept:
+    summary: "When optimized-baseline is the right choice."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/optimized-baseline.md
+    secondary: []
+
+  pd_disaggregation_concept:
+    summary: "When PD is the right choice."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/pd-disaggregation.md
+    secondary: []
+
+  precise_prefix_cache_aware_concept:
+    summary: "When precise prefix cache is the right choice."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/precise-prefix-cache-routing.md
+    secondary: []
+
+  predicted_latency_concept:
+    summary: "When predicted-latency routing is the right choice."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/predicted-latency.md
+    secondary: []
+
+  tiered_prefix_cache_concept:
+    summary: "When tiered prefix cache offload is the right choice."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/tiered-prefix-cache.md
+    secondary: []
+
+  wide_expert_parallelism_concept:
+    summary: "When wide expert parallelism (LWS) is the right choice."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/capabilities/wide-expert-parallelism.md
+    secondary: []
+
+  workload_autoscaling_concept:
+    summary: "When to add autoscaling and which option (WVA vs HPA-EPP)."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/traffic-control/workload-autoscaling.md
+    secondary: []
+
+  flow_control_concept:
+    summary: "When to enable flow control (admission/queueing/priority)."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/traffic-control/flow-control.md
+    secondary: []
+
+  asynchronous_processing_concept:
+    summary: "When async processing is the right choice."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/workloads/batch-serving/asynchronous-processing.md
+    secondary: []
+
+  index:
+    summary: "Browse all well-lit-paths concept docs."
+    main: https://github.com/llm-d/llm-d/blob/main/docs/well-lit-paths/README.md
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# Forward-looking design proposals (not yet shipped — agent should reference
+# only when a user asks "is this on the roadmap?" or similar).
+# ---------------------------------------------------------------------------
+proposals:
+  index:
+    summary: "Index of design proposals."
+    main: https://github.com/llm-d/llm-d/tree/main/proposals
+    secondary: []
+
+  llm_d_overview:
+    summary: "Top-level llm-d project proposal."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d.md
+    secondary: []
+
+  autoscaler:
+    summary: "Future autoscaler design (beyond current WVA/HPA)."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/autoscaler.md
+    secondary: []
+
+  coordinator:
+    summary: "Multi-cluster coordinator proposal."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/coordinator.md
+    secondary: []
+
+  inference_resilience_operator:
+    summary: "Resilience operator for inference workloads."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/inference-resilience-operator.md
+    secondary: []
+
+  payload_processor:
+    summary: "Inference payload processor design."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d-inference-payload-processor.md
+    secondary: []
+
+  planner:
+    summary: "llm-d planner design."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d-planner.md
+    secondary: []
+
+  skills:
+    summary: "Agent skill proposal — relevant context for the autoconfig skill itself."
+    main: https://github.com/llm-d/llm-d/blob/main/proposals/llm-d-skills.md
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# Observability + cluster-resource setup
+# ---------------------------------------------------------------------------
+observability:
+  metrics:
+    summary: "Prometheus metrics exposed by EPP / model servers / sidecars."
+    main: https://llm-d.ai/docs/resources/monitoring/metrics
+    secondary: []
+
+  tracing:
+    summary: "Distributed tracing setup."
+    main: https://llm-d.ai/docs/resources/monitoring/tracing
+    secondary: []
+
+cluster_resources:
+  rdma:
+    summary: "RDMA NIC + RoCE setup for PD KV transfer."
+    main: https://llm-d.ai/docs/resources/rdma/rdma-configuration
+    secondary:
+      - https://github.com/llm-d/llm-d/blob/main/docs/infrastructure/providers/gke/README.md
+
+# ---------------------------------------------------------------------------
+# Implementation repos — cite as secondary when guide README lacks detail.
+# (Deprecated repos llm-d-deployer / llm-d-model-service / llm-d-routing-sidecar
+# are intentionally omitted — see meta.notes above.)
+# ---------------------------------------------------------------------------
+implementation_repos:
+  llm_d_router:
+    summary: "Canonical EPP + Router source. Renamed from llm-d-inference-scheduler; now includes the EPP framework plugins, InferenceObjective/InferenceModelRewrite APIs, the pd-sidecar binary, and the routerlib helm chart."
+    main: https://github.com/llm-d/llm-d-router/blob/main/README.md
+    secondary:
+      - https://github.com/llm-d/llm-d-router/blob/main/config/charts/routerlib/values.yaml
+      - https://github.com/llm-d/llm-d-router/tree/main/pkg/epp/framework/plugins
+
+  llm_d_kv_cache:
+    summary: "Distributed KV cache scheduling + offloading libraries (powers KV indexer/offloader)."
+    main: https://github.com/llm-d/llm-d-kv-cache/blob/main/README.md
+    secondary: []
+
+  llm_d_latency_predictor:
+    summary: "Latency prediction service (the XGBoost sidecar). Talked to by predicted-latency-producer plugin."
+    main: https://github.com/llm-d/llm-d-latency-predictor/blob/main/README.md
+    secondary: []
+
+  llm_d_workload_variant_autoscaler:
+    summary: "WVA implementation."
+    main: https://github.com/llm-d/llm-d-workload-variant-autoscaler/blob/main/README.md
+    secondary: []
+
+  llm_d_inference_payload_processor:
+    summary: "Inference payload processor (request/response transformation)."
+    main: https://github.com/llm-d/llm-d-inference-payload-processor/blob/main/README.md
+    secondary: []
+
+  llm_d_pd_utils:
+    summary: "PD utilities (NIXL image build)."
+    main: https://github.com/llm-d/llm-d-pd-utils/blob/main/README.md
+    secondary: []
+
+  llm_d_prism:
+    summary: "Performance analysis for distributed inference systems."
+    main: https://github.com/llm-d/llm-d-prism/blob/main/README.md
+    secondary: []
+
+# ---------------------------------------------------------------------------
+# Getting-started entry points (for users who haven't picked a topology yet).
+# ---------------------------------------------------------------------------
+getting_started:
+  index:
+    summary: "Top-level getting-started page."
+    main: https://llm-d.ai/docs/getting-started
+    secondary: []
+
+  quickstart:
+    summary: "End-to-end quickstart."
+    main: https://llm-d.ai/docs/getting-started/quickstart
+    secondary: []
+
+  artifacts:
+    summary: "Build artifacts + image registry locations."
+    main: https://llm-d.ai/docs/getting-started/artifacts
+    secondary: []

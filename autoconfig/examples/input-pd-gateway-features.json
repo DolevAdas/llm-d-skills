@@ -1,0 +1,54 @@
+{
+  "version": "0.3.1",
+  "model": "openai/gpt-oss-120b",
+  "model_context_length": 131072,
+  "workload": {
+    "isl": 4000,
+    "osl": 300,
+    "prefix_share": "low"
+  },
+  "slo": {
+    "ttft_ms": 1200,
+    "tpot_ms": 25
+  },
+  "topology": {
+    "mode": "disagg",
+    "prefill_replicas": 8,
+    "prefill_tp": 1,
+    "decode_replicas": 2,
+    "decode_tp": 4,
+    "pd_transport": "rdma"
+  },
+  "features": {
+    "enable_latency_predictor": true,
+    "enable_inference_objective": true,
+    "autoscaler": "wva"
+  },
+  "context": {
+    "namespace": "prod-pd",
+    "release_name": "pd",
+    "deploy_mode": "gateway",
+    "gateway_provider": "istio"
+  },
+  "recommendation": {
+    "plugins": [
+      {"type": "disagg-headers-handler"},
+      {"type": "always-disagg-pd-decider"},
+      {"type": "disagg-profile-handler"},
+      {"type": "prefill-filter"},
+      {"type": "decode-filter"},
+      {"type": "prefix-cache-scorer"},
+      {"type": "queue-scorer"},
+      {"type": "kv-cache-utilization-scorer"},
+      {"type": "active-request-scorer"},
+      {"type": "predicted-latency-producer"},
+      {"type": "max-score-picker"}
+    ],
+    "cited_sources": [
+      "https://github.com/llm-d/llm-d/blob/main/guides/pd-disaggregation/router/pd-disaggregation.values.yaml",
+      "https://github.com/llm-d/llm-d/blob/main/guides/predicted-latency-routing/README.md",
+      "https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency/README.md"
+    ],
+    "summary": "PD disagg with predicted-latency producer overlaid (PD-aware via endpointRoleLabel per the producer README). Canonical PD plugin set from pd-disaggregation.values.yaml; no latency-slo-admitter under PD (no published canonical for that combo). WVA autoscaler enabled — Phase 6 will need a separate `kubectl apply -k` for the WVA operator; this script only handles the EPP layer."
+  }
+}

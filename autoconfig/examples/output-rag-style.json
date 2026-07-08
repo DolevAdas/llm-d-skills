@@ -1,0 +1,207 @@
+{
+  "version": "0.3.1",
+  "input_hash": "6e93b5e3b88568f3",
+  "decisions": {
+    "workload_class": "high-prefix-share",
+    "epp": {
+      "chart": "standalone",
+      "image_tag": "main",
+      "endpoint_picker_config": {
+        "apiVersion": "llm-d.ai/v1alpha1",
+        "kind": "EndpointPickerConfig",
+        "plugins": [
+          {
+            "type": "queue-scorer"
+          },
+          {
+            "type": "kv-cache-utilization-scorer"
+          },
+          {
+            "type": "precise-prefix-cache-scorer",
+            "parameters": {
+              "tokenProcessorConfig": {
+                "blockSize": 64,
+                "hashSeed": "42"
+              },
+              "indexerConfig": {
+                "tokenizersPoolConfig": {
+                  "modelName": "meta-llama/Llama-3.1-8B-Instruct"
+                }
+              }
+            }
+          },
+          {
+            "type": "no-hit-lru-scorer",
+            "parameters": {
+              "lruSize": 16
+            }
+          }
+        ],
+        "schedulingProfiles": [
+          {
+            "name": "default",
+            "plugins": [
+              {
+                "pluginRef": "queue-scorer",
+                "weight": 2
+              },
+              {
+                "pluginRef": "kv-cache-utilization-scorer",
+                "weight": 2
+              },
+              {
+                "pluginRef": "precise-prefix-cache-scorer",
+                "weight": 4
+              },
+              {
+                "pluginRef": "no-hit-lru-scorer",
+                "weight": 2
+              }
+            ]
+          }
+        ]
+      },
+      "chart_toggles": {}
+    },
+    "benchmark": {
+      "harness": "guidellm",
+      "harness_image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2",
+      "config": {
+        "endpoint": {
+          "stack_name": "rag-Llama-3.1-8B-Instruct",
+          "model": "meta-llama/Llama-3.1-8B-Instruct",
+          "namespace": "${NAMESPACE}",
+          "base_url": "${IP}",
+          "hf_token_secret": null
+        },
+        "control": {
+          "work_dir": "$HOME/llm-d-bench-work",
+          "kubectl": "kubectl"
+        },
+        "harness": {
+          "name": "guidellm",
+          "results_pvc": "${BENCHMARK_PVC}",
+          "namespace": "${NAMESPACE}",
+          "parallelism": 1,
+          "wait_timeout": 6000,
+          "image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2"
+        },
+        "workload": {
+          "sanity": {
+            "target": "${IP}",
+            "model": "meta-llama/Llama-3.1-8B-Instruct",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              1
+            ],
+            "max_seconds": 30,
+            "data": {
+              "prompt_tokens": 4000,
+              "output_tokens": 300
+            }
+          },
+          "sla_validation": {
+            "target": "${IP}",
+            "model": "meta-llama/Llama-3.1-8B-Instruct",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              1,
+              2,
+              3
+            ],
+            "max_seconds": 120,
+            "data": {
+              "prompt_tokens_min": 2000,
+              "prompt_tokens_max": 6000,
+              "prompt_tokens": 4000,
+              "prompt_tokens_stdev": 400,
+              "output_tokens_min": 150,
+              "output_tokens_max": 450,
+              "output_tokens": 300,
+              "output_tokens_stdev": 30,
+              "samples": 1000
+            },
+            "sla_targets": {
+              "ttft_ms_p95_target": 1500,
+              "tpot_ms_p95_target": 30
+            },
+            "_rate_derivation": "workload class high-prefix-share baseline 1.0 req/s/replica \u00d7 4 replicas, adjusted for ISL/OSL \u2192 ~4.0 req/s estimated max; rates are 25%/50%/85% of that"
+          }
+        },
+        "_hf_token_secret": null
+      }
+    },
+    "context": {
+      "namespace": "rag-prod",
+      "release_name": "rag",
+      "deploy_mode": "standalone",
+      "gateway_provider": null,
+      "modelserver_deploy_planned": true,
+      "hf_secret_name": null,
+      "hf_secret_exists": false,
+      "bench_tokenizer_override": null
+    },
+    "features": {
+      "enable_latency_predictor": false,
+      "enable_precise_prefix_cache": false,
+      "enable_tiered_cache": false,
+      "enable_flow_control": false,
+      "enable_wide_ep": false,
+      "enable_inference_objective": false,
+      "enable_model_rewrite": false,
+      "autoscaler": null,
+      "serving_pattern": "sync",
+      "autotune_supported": true
+    },
+    "topology": {
+      "mode": "agg",
+      "replicas": 4,
+      "tp": 2,
+      "prefill_replicas": null,
+      "prefill_tp": null,
+      "decode_replicas": null,
+      "decode_tp": null,
+      "pd_transport": null
+    },
+    "model": "meta-llama/Llama-3.1-8B-Instruct"
+  },
+  "rationale": [
+    "Topology: agg, replicas=4, tp=2",
+    "Plugin set (4 plugins): queue-scorer, kv-cache-utilization-scorer, precise-prefix-cache-scorer, no-hit-lru-scorer",
+    "Chart: llm-d-router (standalone variant; matches optimized-baseline guide)",
+    "Agent recommendation: Heavy shared-prefix RAG workload. Swap basic prefix-cache-scorer for precise-prefix-cache-scorer (exact KV-block matching) per the precise-prefix-cache-routing guide; weight=4 reflects the cache-hit dominance of the workload.",
+    "Cited sources:",
+    "  - https://github.com/llm-d/llm-d/blob/main/guides/precise-prefix-cache-routing/README.md",
+    "  - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/preciseprefixcache/README.md",
+    "no-hit-lru-scorer.lruSize = 16 \u2014 max(16, replicas 4 \u00d7 2 = 8). LRU must track all pods with headroom. (Our derivation; upstream default = 1024.)",
+    "precise-prefix-cache-scorer.tokenProcessorConfig.blockSize = 64 \u2014 must match vLLM's --block-size (correctness)",
+    "precise-prefix-cache-scorer.tokenProcessorConfig.hashSeed = 42 \u2014 must match vLLM's PYTHONHASHSEED (correctness)"
+  ],
+  "parameters": [
+    {
+      "name": "no-hit-lru-scorer.lruSize",
+      "value": 16,
+      "tier": "T4",
+      "rationale": "max(16, replicas 4 \u00d7 2 = 8). LRU must track all pods with headroom. (Our derivation; upstream default = 1024.)"
+    },
+    {
+      "name": "precise-prefix-cache-scorer.tokenProcessorConfig.blockSize",
+      "value": 64,
+      "tier": "T2",
+      "rationale": "must match vLLM's --block-size (correctness)"
+    },
+    {
+      "name": "precise-prefix-cache-scorer.tokenProcessorConfig.hashSeed",
+      "value": "42",
+      "tier": "T2",
+      "rationale": "must match vLLM's PYTHONHASHSEED (correctness)"
+    }
+  ],
+  "unresolved_questions": [],
+  "warnings": [
+    "guidellm does not synthesize shared prefixes \u2014 this benchmark sends uniformly-distributed prompts and won't exercise prefix-cache routing. For shared-prefix benchmarking, switch to the inference-perf harness (--bench-harness inference-perf) which supports proper shared_prefix synthesis."
+  ],
+  "errors": []
+}

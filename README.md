@@ -15,8 +15,29 @@ In the case of Claude code, skills residing in `.claude/skills/` at the project 
 
 | Skill | Description |
 |-------|-------------|
-| [deploy-llm-d](skills/deployment/) | Configure and deploy llm-d on existing Kubernetes and OpenShift clusters. |
+| [deploy-llm-d](skills/deploy-llm-d/) | Configure and deploy llm-d on existing Kubernetes and OpenShift clusters. |
 | [teardown-llm-d](skills/teardown-llm-d/) | Tear down, remove, clean up, or undeploy a deployed llm-d stack. |
 | [run-llm-d-benchmark](skills/run-llm-d-benchmark/) | Run a benchmark workload against an already deployed llm-d stack using llm-d-benchmark tooling. |
 | [compare-llm-d-configurations](skills/compare-llm-d-configurations/) | Compare the benchmark performance of two llm-d stack configurations end-to-end. |
 | [configure-wva-autoscaling-llm-d](skills/configure-wva-autoscaling-llm-d/) | Configure and optimize Workload Variant Autoscaler (WVA) for llm-d inference deployments. |
+
+## Autoconfig
+
+[`autoconfig/`](autoconfig/) is a larger, self-contained sub-project (kept outside `skills/` because it carries its own tested Python renderer, fixtures, and design docs). It configures an llm-d EPP `EndpointPickerConfig` from workload + SLA inputs and renders a complete deployable YAML set. The agent skill lives at [`autoconfig/skill/llm-d-autoconfig/`](autoconfig/skill/llm-d-autoconfig/); see [`autoconfig/README.md`](autoconfig/README.md) for how to install and run it.
+
+## Choosing between autoconfig and the single-purpose skills
+
+The single-purpose skills above each do **one** operation you already know you want. Autoconfig is a **guided, end-to-end workflow** for the case where you *don't* yet know the right configuration: you describe a workload + SLA and it recommends an EPP config (doc-anchored), renders a deployable bundle, and can drive the deploy and a benchmark.
+
+| You want to… | Use |
+|---|---|
+| Decide *what* llm-d config fits a workload + SLA, then stand it up from scratch | **autoconfig** |
+| Deploy/verify/customize a config you already know | [`deploy-llm-d`](skills/deploy-llm-d/) |
+| Benchmark an already-deployed stack | [`run-llm-d-benchmark`](skills/run-llm-d-benchmark/) |
+| Compare two stack configurations end-to-end | [`compare-llm-d-configurations`](skills/compare-llm-d-configurations/) |
+| Configure WVA autoscaling | [`configure-wva-autoscaling-llm-d`](skills/configure-wva-autoscaling-llm-d/) |
+| Tear down a deployed stack | [`teardown-llm-d`](skills/teardown-llm-d/) |
+
+**How they relate.** Autoconfig owns config *generation* and its own deterministic, clone-free deploy/benchmark path (built around the bundle it renders). The single-purpose skills are the tools for a standalone operation on a config you already have — they follow the guide-driven (`LLMD_PATH` clone) workflow and can be used independently of autoconfig. To avoid duplication, autoconfig defers generic Kubernetes/deploy troubleshooting to [`deploy-llm-d`'s troubleshooting guide](skills/deploy-llm-d/references/troubleshooting.md) and keeps only EPP/PD/bundle-specific pitfalls of its own.
+
+**For code assistants:** activate autoconfig when the user is asking *what config to use* / *how to set up llm-d for a workload* / *tune the EPP scheduler*. Activate a single-purpose skill when the user names a single, well-scoped operation (deploy this, benchmark that, tear this down) on a stack or config that's already decided.

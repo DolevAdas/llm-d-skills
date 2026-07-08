@@ -1,0 +1,47 @@
+{
+  "version": "0.3.1",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "model_context_length": 131072,
+  "workload": {
+    "isl": 4000,
+    "osl": 300,
+    "prefix_share": "high",
+    "prefix_len": 3000
+  },
+  "slo": {
+    "ttft_ms": 1500,
+    "tpot_ms": 30
+  },
+  "topology": {
+    "mode": "agg",
+    "replicas": 4,
+    "tp": 2
+  },
+  "correctness": {
+    "vllm_block_size": 64,
+    "vllm_hash_seed": "42"
+  },
+  "context": {
+    "namespace": "rag-prod",
+    "release_name": "rag"
+  },
+  "recommendation": {
+    "plugins": [
+      {"type": "queue-scorer"},
+      {"type": "kv-cache-utilization-scorer"},
+      {"type": "precise-prefix-cache-scorer"},
+      {"type": "no-hit-lru-scorer"}
+    ],
+    "weights": {
+      "queue-scorer": 2,
+      "kv-cache-utilization-scorer": 2,
+      "precise-prefix-cache-scorer": 4,
+      "no-hit-lru-scorer": 2
+    },
+    "cited_sources": [
+      "https://github.com/llm-d/llm-d/blob/main/guides/precise-prefix-cache-routing/README.md",
+      "https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/scheduling/scorer/preciseprefixcache/README.md"
+    ],
+    "summary": "Heavy shared-prefix RAG workload. Swap basic prefix-cache-scorer for precise-prefix-cache-scorer (exact KV-block matching) per the precise-prefix-cache-routing guide; weight=4 reflects the cache-hit dominance of the workload."
+  }
+}

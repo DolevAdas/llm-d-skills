@@ -65,11 +65,26 @@
 - **Solution**: Check kustomization.yaml exists in overlay directory
 - **Solution**: Use full path: `kustomize build ${LLMD_PATH}/guides/<guide>/modelserver/<accelerator>/<server>/`
 
+**Modelserver overlay path 404 / not found (`h100/`, `h200/`, `a100/`, etc.):**
+- **Problem**: A path like `.../modelserver/h100/vllm/` (or `h200/`, `a100/`, `b200/`) returns 404 or "no such directory"
+- **Root Cause**: `modelserver/` is laid out by accelerator **FAMILY**, not by GPU model. All NVIDIA GPUs (H100, H200, A100, B200) share the same `gpu/vllm/` overlay. There is no per-GPU-model granularity.
+- **Solution**: Use the family directory for your accelerator:
+  - NVIDIA GPU → `gpu/vllm/` (with `base/` for vanilla clusters or `gke/` on GKE)
+  - AMD GPU → `amd/vllm/`
+  - Intel XPU → `xpu/vllm/`; Intel Gaudi (HPU) → `hpu/vllm/`
+  - Google TPU → `tpu-v6/vllm/` or `tpu-v7/vllm/`; CPU-only → `cpu/vllm/`
+- **Verify**: `ls ${LLMD_PATH}/guides/<guide>/modelserver/` (or browse https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline/modelserver) to see the published families
+
 **Namespace not set or incorrect:**
 - **Problem**: Commands fail because namespace not specified
 - **Solution**: Always export NAMESPACE: `export NAMESPACE=your-namespace`
 - **Solution**: Add `-n ${NAMESPACE}` to all kubectl/oc commands
 - **Solution**: Verify current namespace: `kubectl config view --minify | grep namespace`
+
+**RBAC denied during apply:**
+- **Problem**: `kubectl apply`/`helm install` returns `forbidden: User cannot create resource ... in API group ...`
+- **Diagnosis**: `kubectl auth can-i <verb> <resource> -n ${NAMESPACE}` confirms the denial
+- **Solution**: Ask the cluster admin to grant the specific role needed; state the exact RBAC rule in plain language; do not attempt to escalate privileges
 
 ## Runtime Issues
 
@@ -163,6 +178,16 @@
     - "--gpu-memory-utilization=0.90"
   ```
 - **Note**: Affects all TP=1 pods (including prefill in P/D disaggregation). TP=2+ shards the model across GPUs and typically has enough headroom.
+
+**Pod OOMKilled during model loading:**
+- **Problem**: Pod exits with `OOMKilled`, often during initial model download/loading
+- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows `Reason: OOMKilled`; check `resources.limits.memory`
+- **Solution**: Increase the model server container's `resources.limits.memory` (e.g. ~80Gi is typical for a 32B model on H100)
+
+**ImagePullBackOff:**
+- **Problem**: Pod stuck in `ImagePullBackOff`
+- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows the pull error — typically `unauthorized`, `not found`, or `manifest unknown`
+- **Solution**: Verify the image tag exists; for a private registry, ensure `imagePullSecrets` is set on the pod spec
 
 **Pods pending:**
 - Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
