@@ -1,6 +1,6 @@
 ---
 name: reset-vllm-cache-in-llm-d-deployment
-description: Clears the KV / prefix cache on all vLLM pods in an llm-d deployment for a clean state. Use when the user wants to flush the cache, reset vLLM state, or start fresh before a test run — even if they don't say "cache" explicitly. Prefers the /reset_prefix_cache API; falls back to random-prompt flooding or pod restart.
+description: Clears the KV / prefix cache on all vLLM pods in an llm-d deployment for a clean state. Use when the user wants to flush the cache, reset vLLM state, or start fresh before a test run — even if they don't say "cache" explicitly. Prefers the /reset_prefix_cache API; falls back to pod restart.
 ---
 
 # Reset vLLM Cache in llm-d
@@ -66,7 +66,7 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/check-dev-mode.sh
 
 If **not enabled**, offer:
 > **1. Enable dev mode** — patches the deployment and restarts pods. The restart clears the cache as a side effect. **Skill ends here.**
-> **2. Flood fallback** — no restart, slower, GPU-only.
+> **2. Restart pods now** — a plain `rollout restart` clears every tier without enabling dev mode (Step 4).
 > **3. Abort**
 
 **Option 1:**
@@ -111,7 +111,7 @@ bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/reset-prefix-cache.sh
 | **Connection refused** | Check pod status/logs. Wait up to 60s for Ready, retry once. Report OOMKilled/CrashLoop to user. |
 | **RBAC / exec error** | Try port-forward: `kubectl port-forward pod/$POD -n $NAMESPACE 18000:$VLLM_PORT &`, then curl `http://localhost:18000/reset_prefix_cache?...`. |
 
-If still failing: *"Reset failed on \<pod(s)\>: \<reason\>. Try flood fallback?"*
+If still failing: *"Reset failed on \<pod(s)\>: \<reason\>. Restart the pods instead (Step 4)?"*
 
 ---
 
@@ -160,69 +160,13 @@ If no FS path is found (FS tier not configured or path is different): inspect th
 
 ---
 
-## Step 4: Fallback — Flood with Random Prompts
-
-> **How it works:** sends unique random prompts to saturate the GPU KV cache, evicting old entries via LRU. After flooding, GPU cache is ≈ 100% full — **not** empty. Success is confirmed when `kv_cache_usage_perc ≥ 0.9`.
->
-> **CPU offloading:** the flood does **not** clear the CPU cache. Blocks evicted from GPU are copied to the (larger) CPU cache and remain accessible. If CPU offloading is enabled, use Step 5 (pod restart) instead.
-
-Before starting, offer Step 5 as an alternative:
-> "Pod restart (~1-2 min) guarantees a fully clean cache. Flood is faster but GPU-only and unreliable with CPU/disk offloading. Which do you prefer?"
-
-Detect model name:
-```bash
-FIRST_POD=$(kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" -o jsonpath='{.items[0].metadata.name}')
-MODEL_NAME=$(kubectl exec -n $NAMESPACE $FIRST_POD -- printenv SERVED_MODEL_NAME 2>/dev/null || echo "")
-[ -z "$MODEL_NAME" ] && MODEL_NAME=$(kubectl exec -n $NAMESPACE $FIRST_POD -- \
-  curl -s http://localhost:${VLLM_PORT}/v1/models 2>/dev/null | jq -r '.data[0].id // empty')
-```
-If still empty, ask the user.
-
-Run:
-```bash
-export NAMESPACE="$NAMESPACE" VLLM_PORT="${VLLM_PORT:-8000}" MODEL_NAME="$MODEL_NAME"
-export LABEL_SELECTOR="$LABEL_SELECTOR"
-export NUM_FLOOD_REQUESTS="${NUM_FLOOD_REQUESTS:-200}"   # increase for 70B+ models
-export FLOOD_PROMPT_LENGTH="${FLOOD_PROMPT_LENGTH:-4000}"
-bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/flood-random-prompts.sh
-```
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NUM_FLOOD_REQUESTS` | `200` | Requests per pod |
-| `FLOOD_PROMPT_LENGTH` | `4000` | Chars per prompt |
-| `FLOOD_MAX_TOKENS` | `1` | Keep low — output doesn't matter |
-| `PARALLEL_JOBS` | `5` | Concurrent requests per pod |
-
-Verify saturation after flooding (up to 10 retries, no sleep):
-```bash
-POD_NAMES=$(kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" --field-selector=status.phase=Running -o jsonpath='{.items[*].metadata.name}')
-for POD in $POD_NAMES; do
-  SATURATED="no"
-  for i in $(seq 1 10); do
-    USAGE=$(kubectl exec -n $NAMESPACE $POD -- \
-      curl -s http://localhost:$VLLM_PORT/metrics 2>/dev/null \
-      | grep "vllm:kv_cache_usage_perc" | grep -v "HELP\|TYPE" | awk '{print $2}')
-    [ -z "$USAGE" ] && echo "$POD: could not read metrics, retrying..." && continue
-    SATURATED=$(awk "BEGIN {print ($USAGE >= 0.9) ? \"yes\" : \"no\"}")
-    [ "$SATURATED" = "yes" ] && echo "$POD: saturated ($USAGE) — old entries displaced" && break
-    echo "$POD: at $USAGE, retrying..."
-  done
-  [ "$SATURATED" != "yes" ] && echo "WARNING: $POD only reached $USAGE — increase NUM_FLOOD_REQUESTS"
-done
-```
-
-Report success once all pods show `≥ 0.9`. If any pod stays below, tell the user and suggest increasing `NUM_FLOOD_REQUESTS` or `FLOOD_PROMPT_LENGTH`.
-
----
-
-## Step 5: Fallback — Restart vLLM Decoder Pods
+## Step 4: Restart vLLM Decoder Pods
 
 Use this step when:
-- Step 3 and Step 4 both failed or were declined, OR
-- You need the CPU mmap data itself purged from process memory (not just its index cleared) — the API clears the index but the raw bytes in `/dev/shm/vllm_offload*.mmap` remain until pod restart
+- Step 3 failed or was declined (dev mode could not be enabled), OR
+- The deployment runs **vLLM < 0.24.0** — the API cannot clear a 3-tier `TieringOffloadingSpec` cache, so a restart is the only way to wipe every tier.
 
-On **vLLM ≥ 0.24.0**, Step 3 + Step 3b is sufficient for clean benchmark runs — the CPU mmap index is cleared (verified by `vllm:external_prefix_cache_hits_total = 0`) and the FS tier files are deleted. Pod restart is only needed when you specifically need the mmap bytes reclaimed from `/dev/shm`. Model reload takes ~1-2 min.
+You need a restart **only on vLLM < 0.24.0**: there the API is a no-op for 3-tier setups, so the CPU mmap data in `/dev/shm/vllm_offload*.mmap` and the secondary tiers persist until the pod restarts. On **vLLM ≥ 0.24.0**, Step 3 + Step 3b already gives a clean cache for benchmark runs — the CPU mmap index is cleared (verified by `vllm:external_prefix_cache_hits_total = 0`) and the FS tier files are deleted, so no restart is required. Model reload takes ~1-2 min.
 
 ```bash
 kubectl rollout restart deployment/$DEPLOYMENT_NAME -n $NAMESPACE
@@ -233,7 +177,7 @@ Report success once rollout completes. The user can proceed immediately — no f
 
 ---
 
-## Step 6: Verification (Optional)
+## Step 5: Verification (Optional)
 
 These are live gauges — they reflect current state without sending any requests:
 
@@ -249,8 +193,7 @@ kubectl exec -n $NAMESPACE $POD -- \
 |--------|-------------------------------|---------------------------------------------|
 | Step 3 (2-tier or 3-tier, vLLM ≥ 0.24.0) | `0.0` | `0.0` — CPU mmap index cleared |
 | Step 3 + Step 3b (3-tier) | `0.0` | `0.0` + FS tier files deleted |
-| Step 4 (flood) | `≥ 0.9` | not meaningful |
-| Step 5 (pod restart) | `0.0` | `0.0` |
+| Step 4 (pod restart) | `0.0` | `0.0` |
 
 > Do **not** use `prefix_cache_hits_total` / `prefix_cache_queries_total` — these counters accumulate since pod start and never reset. Do **not** send requests to verify: that defeats the purpose of clearing the cache before a benchmark run.
 
@@ -260,9 +203,8 @@ kubectl exec -n $NAMESPACE $POD -- \
 
 - **NixL / LMCache connectors**: `reset_external=true` is a no-op for these. The shared KV store in disaggregated prefill/decode setups will NOT be cleared.
 - **CPU/memory offloading**: Step 3 with `reset_external=true` clears the CPU cache **only when `CPUOffloadingSpec` is used** (2-tier). For `TieringOffloadingSpec` (3-tier: GPU + CPU + memory), behavior is version-dependent:
-  - **vLLM < 0.24.0**: `reset_external=true` is a no-op — neither GPU nor secondary tier is cleared.
-  - **vLLM ≥ 0.24.0** ([PR #44541](https://github.com/vllm-project/vllm/pull/44541)): GPU primary tier is cleared; secondary memory tier data persists by design. Run Step 3b to also clear the memory tier — pod restart (Step 5) only needed when the secondary tier is in-process DRAM with no accessible FS path.
-  The flood method never clears the CPU or memory cache regardless of version.
+  - **vLLM < 0.24.0**: `reset_external=true` is a no-op — neither GPU nor secondary tier is cleared. A pod restart (Step 4) is the only way to get a clean cache.
+  - **vLLM ≥ 0.24.0** ([PR #44541](https://github.com/vllm-project/vllm/pull/44541)): the API drains in-flight transfers, resets the GPU primary tier, and clears the CPU mmap index (so no cache hits can be served from CPU data — verified by `vllm:external_prefix_cache_hits_total = 0`). Run Step 3b to also delete the FS secondary tier files. No pod restart is needed.
 - **In-flight requests**: `reset_running_requests=true` terminates active requests. Use `false` to clear the cache without disrupting ongoing work.
 - **Dev mode security**: `VLLM_SERVER_DEV_MODE=1` exposes internal endpoints. Disable after use in production-like environments.
-- **Pod restarts**: Step 3 and flood do not restart pods. Enabling dev mode (Step 2 option 1) does — but that clears the cache as a side effect, so no further reset is needed.
+- **Pod restarts**: Step 3 does not restart pods. Enabling dev mode (Step 2 option 1) does — but that clears the cache as a side effect, so no further reset is needed.
