@@ -28,29 +28,33 @@ Ask the user:
 
 Set `NAMESPACE` to the user's answer. If the user just confirms without specifying, use `CURRENT_NS` — the namespace they are currently working in.
 
-List llm-d deployments:
+List llm-d deployments (the `ROLE` column reveals a disaggregated setup):
 ```bash
-kubectl get deployments -n $NAMESPACE -l app.kubernetes.io/part-of=llm-d -o custom-columns="NAME:.metadata.name,READY:.status.readyReplicas,DESIRED:.spec.replicas,AGE:.metadata.creationTimestamp"
+kubectl get deployments -n $NAMESPACE -l app.kubernetes.io/part-of=llm-d \
+  -o custom-columns="NAME:.metadata.name,ROLE:.spec.template.metadata.labels.llm-d\.ai/role,READY:.status.readyReplicas,DESIRED:.spec.replicas"
 # If empty, broaden:
 kubectl get deployments -n $NAMESPACE | grep -iE "llm-d|vllm"
 ```
 
 - **One result** → use automatically, inform the user.
 - **Multiple** → ask: *"Which deployment? (or 'all' to reset every vLLM pod in the namespace)"*
+- **Disaggregated prefill/decode** — you see both a `…-prefill` and a `…-decode` deployment (or `ROLE=prefill` / `ROLE=decode`): **both must be reset.** Prefill pods hold KV cache too, so clearing only decode leaves stale prefill KV. Reset every role — the `all` selector below covers both in one pass, or run Steps 2–4 once per deployment.
 
-Derive `LABEL_SELECTOR`:
+Derive `LABEL_SELECTOR`. The deployment's own `matchLabels` is the most reliable source — label conventions differ across llm-d versions (`llm-d.ai/engine-type=vllm` on newer, `app.kubernetes.io/component=vllm` on older), and the hardcoded guesses below may match nothing:
 ```bash
-# Specific deployment:
-LABEL_SELECTOR="app.kubernetes.io/component=vllm,app.kubernetes.io/instance=$DEPLOYMENT_NAME"
-# If no pods found, fall back to the deployment's own selector:
+# Specific deployment (works regardless of label convention):
 LABEL_SELECTOR=$(kubectl get deployment -n $NAMESPACE $DEPLOYMENT_NAME -o jsonpath='{.spec.selector.matchLabels}' | jq -r 'to_entries | map("\(.key)=\(.value)") | join(",")')
-# For 'all':
-LABEL_SELECTOR="app.kubernetes.io/component=vllm"
+
+# For 'all' vLLM pods in the namespace — covers BOTH prefill and decode roles.
+# Try the newer engine-type label first, fall back to the older component label:
+LABEL_SELECTOR="llm-d.ai/engine-type=vllm"
+[ -z "$(kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" -o name 2>/dev/null)" ] && \
+  LABEL_SELECTOR="app.kubernetes.io/component=vllm"
 ```
 
-Show the affected pods and ask the user to confirm:
+Show the affected pods and ask the user to confirm (for P/D, confirm you see **both** roles):
 ```bash
-kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" --field-selector=status.phase=Running -o wide
+kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" --field-selector=status.phase=Running -o wide -L llm-d.ai/role
 ```
 
 ---
@@ -183,7 +187,7 @@ done
 
 ---
 
-## Step 4: Restart vLLM Decoder Pods
+## Step 4: Restart vLLM Pods
 
 Use this step when either:
 - **Step 3 could not run** — dev mode couldn't be enabled, or the API failed on every pod (works on any version), OR
@@ -194,6 +198,16 @@ The version distinction matters for 3-tier setups: on **vLLM < 0.24.0** a restar
 ```bash
 kubectl rollout restart deployment/$DEPLOYMENT_NAME -n $NAMESPACE
 kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=300s
+```
+
+**Disaggregated prefill/decode:** restart **both** deployments (the `…-prefill` and `…-decode` from Step 1) — restarting one role leaves the other's KV cache intact:
+```bash
+for D in $PREFILL_DEPLOYMENT $DECODE_DEPLOYMENT; do
+  kubectl rollout restart deployment/$D -n $NAMESPACE
+done
+for D in $PREFILL_DEPLOYMENT $DECODE_DEPLOYMENT; do
+  kubectl rollout status deployment/$D -n $NAMESPACE --timeout=300s
+done
 ```
 
 Report success once rollout completes. The user can proceed immediately — no further verification needed.
@@ -224,7 +238,9 @@ kubectl exec -n $NAMESPACE $POD -- \
 
 ## Important Notes
 
-- **NixL / LMCache connectors**: `reset_external=true` is a no-op for these. The shared KV store in disaggregated prefill/decode setups will NOT be cleared.
+- **Disaggregated prefill/decode**: prefill and decode run as **separate deployments**, each with its own GPU/CPU/FS tiers. Reset **both roles** (Step 1 flags this) — clearing only decode leaves prefill's KV cache populated.
+- **NixL connector**: a point-to-point KV *transport*, not a persistent store — transferred blocks live in each worker's own GPU/CPU/FS cache. Resetting **both** prefill and decode pods (Steps 3 + 3b on each) fully clears NixL-moved KV. `reset_external` itself is a no-op, but nothing beyond the per-worker reset is needed.
+- **LMCache / Mooncake stores**: genuine shared/external KV stores that persist independently of the workers. `reset_external=true` does NOT clear them, and neither does a worker pod restart. Clear them by restarting or flushing their backing service (Redis, the Mooncake store, etc.) — **outside this skill's scope**.
 - **Tier terminology**: "3-tier" `TieringOffloadingSpec` = GPU primary + CPU mmap + an **FS secondary tier** (the `root_dir` in the config). That FS tier is just a filesystem path — it may be disk-backed (PVC) or memory-backed (tmpfs / `emptyDir medium: Memory`); either way Step 3b clears it with `find … -delete`. Where earlier notes say "memory tier," they mean this FS tier.
 - **CPU/memory offloading**: Step 3 with `reset_external=true` clears the CPU cache **only when `CPUOffloadingSpec` is used** (2-tier). For `TieringOffloadingSpec` (3-tier: GPU + CPU + FS), behavior is version-dependent:
   - **vLLM < 0.24.0**: `reset_external=true` is a no-op — neither GPU nor secondary tier is cleared. A pod restart (Step 4) is the only way to get a clean cache.
