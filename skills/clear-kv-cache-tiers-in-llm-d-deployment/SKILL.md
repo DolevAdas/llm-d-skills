@@ -1,6 +1,6 @@
 ---
-name: reset-vllm-cache-in-llm-d-deployment
-description: Clears the KV / prefix cache on all vLLM pods in an llm-d deployment for a clean state. Use when the user wants to flush the cache, reset vLLM state, or start fresh before a test run — even if they don't say "cache" explicitly. Prefers the /reset_prefix_cache API; falls back to pod restart.
+name: clear-kv-cache-tiers-in-llm-d-deployment
+description: Clears all KV / prefix cache tiers (GPU, CPU, and FS offload) on every vLLM pod in an llm-d deployment for a clean state — including both roles of a disaggregated prefill/decode setup. Use when the user wants to flush the cache, reset vLLM state, or start fresh before a test run — even if they don't say "cache" explicitly. Prefers the /reset_prefix_cache API; falls back to pod restart.
 ---
 
 # Reset vLLM Cache in llm-d
@@ -63,7 +63,7 @@ kubectl get pods -n $NAMESPACE -l "$LABEL_SELECTOR" --field-selector=status.phas
 
 Run the dev-mode check script:
 ```bash
-bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/check-dev-mode.sh
+bash skills/clear-kv-cache-tiers-in-llm-d-deployment/scripts/check-dev-mode.sh
 ```
 
 `VLLM_SERVER_DEV_MODE=1` is required for the `/reset_prefix_cache` endpoint. It only registers extra API routes at startup — no effect on inference speed (TPS, TTFT).
@@ -94,7 +94,7 @@ export VLLM_PORT="${VLLM_PORT:-8000}"
 export LABEL_SELECTOR="$LABEL_SELECTOR"
 export RESET_RUNNING_REQUESTS=true
 export RESET_EXTERNAL=true
-bash skills/reset-vllm-cache-in-llm-d-deployment/scripts/reset-prefix-cache.sh
+bash skills/clear-kv-cache-tiers-in-llm-d-deployment/scripts/reset-prefix-cache.sh
 ```
 
 | Variable | Default | Description |
