@@ -13,13 +13,7 @@ Clear the KV / prefix cache on all vLLM pods in an llm-d deployment so the next 
 
 ## Step 1: Ask for Namespace and Deployment
 
-Detect the current namespace and related options:
-```bash
-CURRENT_NS=$(oc project -q 2>/dev/null || kubectl config view --minify -o jsonpath='{..namespace}' 2>/dev/null || echo "")
-SUGGESTED_NS=$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
-  | tr ' ' '\n' | grep -iE "llm-d|inference|serving|benchmark" | grep -v "^$CURRENT_NS$" | head -5)
-```
-
+1. Detect the current namespace and related options:
 Ask the user:
 > "Which namespace?
 > **1. \<CURRENT_NS\>** *(current context)*
@@ -28,14 +22,13 @@ Ask the user:
 
 Set `NAMESPACE` to the user's answer. If the user just confirms without specifying, use `CURRENT_NS` — the namespace they are currently working in.
 
-List llm-d deployments (the `ROLE` column reveals a disaggregated setup):
+2. List llm-d deployments (the `ROLE` column reveals a disaggregated setup):
 ```bash
 kubectl get deployments -n $NAMESPACE -l app.kubernetes.io/part-of=llm-d \
   -o custom-columns="NAME:.metadata.name,ROLE:.spec.template.metadata.labels.llm-d\.ai/role,READY:.status.readyReplicas,DESIRED:.spec.replicas"
 # If empty, broaden:
 kubectl get deployments -n $NAMESPACE | grep -iE "llm-d|vllm"
 ```
-
 - **One result** → use automatically, inform the user.
 - **Multiple** → ask: *"Which deployment? (or 'all' to reset every vLLM pod in the namespace)"*
 - **Disaggregated prefill/decode** — you see both a `…-prefill` and a `…-decode` deployment (or `ROLE=prefill` / `ROLE=decode`): **both must be reset.** Prefill pods hold KV cache too, so clearing only decode leaves stale prefill KV. Reset every role — the `all` selector below covers both in one pass, or run Steps 2–4 once per deployment.
@@ -105,7 +98,7 @@ bash skills/clear-kv-cache-tiers-in-llm-d-deployment/scripts/reset-prefix-cache.
 
 **Warn the user before running:** `RESET_RUNNING_REQUESTS=true` terminates in-flight requests. Ensure no active traffic is hitting the pods.
 
-**On success:** for a 2-tier / GPU-only deployment, report done — the user can proceed. For a 3-tier `TieringOffloadingSpec` deployment, continue to **Step 3b** before proceeding (the FS tier files are not yet cleared).
+**On success:** for a 1-tier (GPU-only) or 2-tier (GPU + CPU, `CPUOffloadingSpec`) deployment, report done — the user can proceed. For a 3-tier `TieringOffloadingSpec` deployment, continue to **Step 3b** before proceeding (the FS tier files are not yet cleared).
 
 **On failure** — auto-diagnose per pod before asking the user:
 
@@ -151,7 +144,7 @@ for POD in $POD_NAMES; do
     | sed -E 's/.*"([^"]+)"$/\1/' | sort -u)
 
   if [ -z "$FS_TIER_PATHS" ]; then
-    echo "  No fs secondary tier in --kv-transfer-config — Step 3b not needed (CPU-only 2-tier, or no root_dir)."
+    echo "  No fs secondary tier in --kv-transfer-config — Step 3b not needed (1-tier GPU-only or 2-tier GPU+CPU; no FS tier)."
   else
     for p in $FS_TIER_PATHS; do
       kubectl exec -n "$NAMESPACE" "$POD" -- sh -c "if [ -d \"$p\" ]; then echo \"  FS_TIER_PATH=$p\"; du -sh \"$p\" 2>/dev/null; else echo \"  configured path $p not present in pod\"; fi"
@@ -228,7 +221,7 @@ kubectl exec -n $NAMESPACE $POD -- \
 
 | Method | Expected `kv_cache_usage_perc` | Expected `external_prefix_cache_hits_total` |
 |--------|-------------------------------|---------------------------------------------|
-| Step 3 (2-tier or 3-tier, vLLM ≥ 0.24.0) | `0.0` | `0.0` — CPU mmap index cleared |
+| Step 3 (1-tier or 2-tier; also 3-tier on vLLM ≥ 0.24.0) | `0.0` | `0.0` — CPU tier index cleared (2/3-tier) |
 | Step 3 + Step 3b (3-tier) | `0.0` | `0.0` + FS tier files deleted |
 | Step 4 (pod restart) | `0.0` | `0.0` |
 
@@ -241,7 +234,12 @@ kubectl exec -n $NAMESPACE $POD -- \
 - **Disaggregated prefill/decode**: prefill and decode run as **separate deployments**, each with its own GPU/CPU/FS tiers. Reset **both roles** (Step 1 flags this) — clearing only decode leaves prefill's KV cache populated.
 - **NixL connector**: a point-to-point KV *transport*, not a persistent store — transferred blocks live in each worker's own GPU/CPU/FS cache. Resetting **both** prefill and decode pods (Steps 3 + 3b on each) fully clears NixL-moved KV. `reset_external` itself is a no-op, but nothing beyond the per-worker reset is needed.
 - **LMCache / Mooncake stores**: genuine shared/external KV stores that persist independently of the workers. `reset_external=true` does NOT clear them, and neither does a worker pod restart. Clear them by restarting or flushing their backing service (Redis, the Mooncake store, etc.) — **outside this skill's scope**.
-- **Tier terminology**: "3-tier" `TieringOffloadingSpec` = GPU primary + CPU mmap + an **FS secondary tier** (the `root_dir` in the config). That FS tier is just a filesystem path — it may be disk-backed (PVC) or memory-backed (tmpfs / `emptyDir medium: Memory`); either way Step 3b clears it with `find … -delete`. Where earlier notes say "memory tier," they mean this FS tier.
+- **Tier terminology** — the tier count is the number of cache levels:
+  - **1-tier**: GPU KV cache only (no offloading configured).
+  - **2-tier**: GPU + CPU (`CPUOffloadingSpec`) — the CPU tier is a host-DRAM mmap file at `/dev/shm/vllm_offload*.mmap`.
+  - **3-tier**: GPU + CPU + **FS secondary tier** (`TieringOffloadingSpec`, the `root_dir` in the config).
+
+  The FS tier is just a filesystem path — disk-backed (PVC) or memory-backed (tmpfs / `emptyDir medium: Memory`); either way Step 3b clears it with `find … -delete`. Where earlier notes say "memory tier," they mean this FS tier.
 - **CPU/memory offloading**: Step 3 with `reset_external=true` clears the CPU cache **only when `CPUOffloadingSpec` is used** (2-tier). For `TieringOffloadingSpec` (3-tier: GPU + CPU + FS), behavior is version-dependent:
   - **vLLM < 0.24.0**: `reset_external=true` is a no-op — neither GPU nor secondary tier is cleared. A pod restart (Step 4) is the only way to get a clean cache.
   - **vLLM ≥ 0.24.0** ([PR #44541](https://github.com/vllm-project/vllm/pull/44541)): the API drains in-flight transfers, resets the GPU primary tier, and clears the CPU mmap index (so no cache hits can be served from CPU data — verified by `vllm:external_prefix_cache_hits_total = 0`). Run Step 3b to also delete the FS secondary tier files. No pod restart is needed.
