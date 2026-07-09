@@ -115,9 +115,11 @@ bash skills/clear-kv-cache-tiers-in-llm-d-deployment/scripts/reset-prefix-cache.
 |----------|---------|-------------|
 | `VLLM_PORT` | `8000` | Port vLLM listens on inside the pod |
 | `RESET_RUNNING_REQUESTS` | `true` | Preempts in-flight requests; use `false` to clear cache without interrupting active work |
-| `RESET_EXTERNAL` | `true` | Clears CPU offload blocks **only if** `CPUOffloadingSpec` is used (2-tier). With `TieringOffloadingSpec` (3-tier: GPU + CPU + FS): on **vLLM ≥ 0.24.0** (includes [PR #44541](https://github.com/vllm-project/vllm/pull/44541)) this drains in-flight transfers, resets the GPU primary tier, and clears the CPU tier index — but the **FS secondary tier files on disk are not deleted** (run Step 3b for those). On vLLM < 0.24.0 this is a no-op for 3-tier. No-op for NixL/LMCache connectors. |
+| `RESET_EXTERNAL` | `true` | Clears CPU offload blocks **only if** `CPUOffloadingSpec` is used (2-tier). With `TieringOffloadingSpec` (3-tier: GPU + CPU + FS): on **vLLM ≥ 0.24.0** (includes [PR #44541](https://github.com/vllm-project/vllm/pull/44541)) this drains in-flight transfers, resets the GPU primary tier, and clears the CPU tier index — but the **FS secondary tier files on disk are not deleted** (run Step 3b for those). On vLLM < 0.24.0 this is a no-op for 3-tier. `reset_external` itself is a no-op for NixL and LMCache connectors — but see the shared-store note below: NixL keeps no separate store (resetting both P/D roles suffices), whereas LMCache/Mooncake shared stores are **not** cleared by this skill. |
 
 **Warn the user before running:** `RESET_RUNNING_REQUESTS=true` terminates in-flight requests. Ensure no active traffic is hitting the pods.
+
+> **⚠️ Shared/external KV store (LMCache, Mooncake):** if the deployment uses one of these connectors, this reset does **not** clear the shared store — it persists across this reset and a pod restart. Flush the backing service (Redis, the Mooncake store, etc.) separately; it is outside this skill's scope. NixL is unaffected (it has no separate store — resetting both P/D roles suffices). See Important Notes.
 
 **On success** (routing depends on tier count and vLLM version — note that a `200` only means the request was accepted, not that a 3-tier cache was actually cleared on old versions):
 - **1-tier (GPU-only) or 2-tier (GPU + CPU, `CPUOffloadingSpec`)** — report done, the user can proceed.
