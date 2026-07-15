@@ -236,13 +236,14 @@ If the script prints a **"fewer than 3 responsive pods"** note for a group *and 
      [print(c['name'], c.get('resources',{})) for c in d['spec']['containers']]"
    ```
 
-4. Restart the flagged pod if errors are transient and re-run the health check:
+4. **STOP and ask the user before doing anything.** Present your findings and explicitly ask:
+   > "Pod `<pod>` is flagged as SUSPICIOUS. Should I restart it?"
+   Wait for the user's explicit approval before proceeding. Never restart automatically.
+
+   If the user approves, restart the flagged pod and re-run the health check:
    ```bash
    kubectl rollout restart deployment/<deployment-name> -n $NAMESPACE
    ```
-   > Confirm with the user before restarting anything.
-
-5. If node-level GPU errors persist, escalate to cluster admin.
 
 ---
 
