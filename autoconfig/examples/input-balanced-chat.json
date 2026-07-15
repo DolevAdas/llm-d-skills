@@ -1,0 +1,23 @@
+{
+  "version": "0.3.1",
+  "model": "Qwen/Qwen3-32B",
+  "model_context_length": 32768,
+  "workload": {
+    "isl": 1000,
+    "osl": 500,
+    "prefix_share": "low"
+  },
+  "slo": {
+    "ttft_ms": 800,
+    "tpot_ms": 25
+  },
+  "topology": {
+    "mode": "agg",
+    "replicas": 8,
+    "tp": 2
+  },
+  "context": {
+    "namespace": "prod-chat",
+    "release_name": "chat"
+  }
+}

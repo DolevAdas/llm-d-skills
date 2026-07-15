@@ -1,0 +1,26 @@
+{
+  "version": "0.3.1",
+  "model": "meta-llama/Llama-3.1-8B-Instruct",
+  "model_context_length": 131072,
+  "workload": {
+    "isl": 500,
+    "osl": 200,
+    "prefix_share": "low"
+  },
+  "slo": {
+    "ttft_ms": 200,
+    "tpot_ms": 15
+  },
+  "topology": {
+    "mode": "agg",
+    "replicas": 8,
+    "tp": 1
+  },
+  "features": {
+    "enable_latency_predictor": true
+  },
+  "context": {
+    "namespace": "realtime-prod",
+    "release_name": "realtime"
+  }
+}

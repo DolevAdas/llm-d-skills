@@ -1,0 +1,262 @@
+{
+  "version": "0.3.1",
+  "input_hash": "c1465bd04c149a97",
+  "decisions": {
+    "workload_class": "balanced-conversational",
+    "epp": {
+      "chart": "gateway",
+      "image_tag": "main",
+      "endpoint_picker_config": {
+        "apiVersion": "llm-d.ai/v1alpha1",
+        "kind": "EndpointPickerConfig",
+        "plugins": [
+          {
+            "type": "disagg-headers-handler"
+          },
+          {
+            "type": "always-disagg-pd-decider"
+          },
+          {
+            "type": "disagg-profile-handler",
+            "parameters": {
+              "deciderPluginName": "always-disagg-pd-decider"
+            }
+          },
+          {
+            "type": "prefill-filter"
+          },
+          {
+            "type": "decode-filter"
+          },
+          {
+            "type": "prefix-cache-scorer",
+            "parameters": {
+              "autoTune": true,
+              "maxPrefixTokensToMatch": 131072
+            }
+          },
+          {
+            "type": "queue-scorer"
+          },
+          {
+            "type": "kv-cache-utilization-scorer"
+          },
+          {
+            "type": "active-request-scorer"
+          },
+          {
+            "type": "predicted-latency-producer",
+            "parameters": {
+              "streamingMode": true,
+              "endpointRoleLabel": "llm-d.ai/role"
+            }
+          },
+          {
+            "type": "max-score-picker"
+          }
+        ],
+        "schedulingProfiles": [
+          {
+            "name": "prefill",
+            "plugins": [
+              {
+                "pluginRef": "prefill-filter"
+              },
+              {
+                "pluginRef": "prefix-cache-scorer",
+                "weight": 3
+              },
+              {
+                "pluginRef": "queue-scorer",
+                "weight": 2
+              },
+              {
+                "pluginRef": "kv-cache-utilization-scorer",
+                "weight": 2
+              },
+              {
+                "pluginRef": "max-score-picker"
+              }
+            ]
+          },
+          {
+            "name": "decode",
+            "plugins": [
+              {
+                "pluginRef": "decode-filter"
+              },
+              {
+                "pluginRef": "prefix-cache-scorer",
+                "weight": 3
+              },
+              {
+                "pluginRef": "active-request-scorer",
+                "weight": 2
+              },
+              {
+                "pluginRef": "max-score-picker"
+              }
+            ]
+          }
+        ]
+      },
+      "chart_toggles": {
+        "router.latencyPredictor.enabled": true,
+        "httpRoute.create": true,
+        "httpRoute.inferenceGatewayName": "llm-d-inference-gateway",
+        "provider.name": "istio"
+      }
+    },
+    "benchmark": {
+      "harness": "guidellm",
+      "harness_image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2",
+      "config": {
+        "endpoint": {
+          "stack_name": "pd-gpt-oss-120b",
+          "model": "openai/gpt-oss-120b",
+          "namespace": "${NAMESPACE}",
+          "base_url": "${IP}",
+          "hf_token_secret": null
+        },
+        "control": {
+          "work_dir": "$HOME/llm-d-bench-work",
+          "kubectl": "kubectl"
+        },
+        "harness": {
+          "name": "guidellm",
+          "results_pvc": "${BENCHMARK_PVC}",
+          "namespace": "${NAMESPACE}",
+          "parallelism": 1,
+          "wait_timeout": 6000,
+          "image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2"
+        },
+        "workload": {
+          "sanity": {
+            "target": "${IP}",
+            "model": "openai/gpt-oss-120b",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              1
+            ],
+            "max_seconds": 30,
+            "data": {
+              "prompt_tokens": 4000,
+              "output_tokens": 300
+            }
+          },
+          "sla_validation": {
+            "target": "${IP}",
+            "model": "openai/gpt-oss-120b",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              5,
+              10,
+              18
+            ],
+            "max_seconds": 120,
+            "data": {
+              "prompt_tokens_min": 2000,
+              "prompt_tokens_max": 6000,
+              "prompt_tokens": 4000,
+              "prompt_tokens_stdev": 400,
+              "output_tokens_min": 150,
+              "output_tokens_max": 450,
+              "output_tokens": 300,
+              "output_tokens_stdev": 30,
+              "samples": 1000
+            },
+            "sla_targets": {
+              "ttft_ms_p95_target": 1200,
+              "tpot_ms_p95_target": 25
+            },
+            "_rate_derivation": "workload class balanced-conversational baseline 5.0 req/s/replica \u00d7 10 replicas, adjusted for ISL/OSL \u2192 ~20.8 req/s estimated max; rates are 25%/50%/85% of that"
+          }
+        },
+        "_hf_token_secret": null
+      }
+    },
+    "context": {
+      "namespace": "prod-pd",
+      "release_name": "pd",
+      "deploy_mode": "gateway",
+      "gateway_provider": "istio",
+      "modelserver_deploy_planned": true,
+      "hf_secret_name": null,
+      "hf_secret_exists": false,
+      "bench_tokenizer_override": null
+    },
+    "features": {
+      "enable_latency_predictor": true,
+      "enable_precise_prefix_cache": false,
+      "enable_tiered_cache": false,
+      "enable_flow_control": false,
+      "enable_wide_ep": false,
+      "enable_inference_objective": true,
+      "enable_model_rewrite": false,
+      "autoscaler": "wva",
+      "serving_pattern": "sync",
+      "autotune_supported": true
+    },
+    "topology": {
+      "mode": "disagg",
+      "replicas": null,
+      "tp": null,
+      "prefill_replicas": 8,
+      "prefill_tp": 1,
+      "decode_replicas": 2,
+      "decode_tp": 4,
+      "pd_transport": "rdma"
+    },
+    "model": "openai/gpt-oss-120b"
+  },
+  "rationale": [
+    "Topology: disagg (PD), prefill=8\u00d7TP=1, decode=2\u00d7TP=4, transport=rdma",
+    "Plugin set (11 plugins): disagg-headers-handler, always-disagg-pd-decider, disagg-profile-handler, prefill-filter, decode-filter, prefix-cache-scorer, queue-scorer, kv-cache-utilization-scorer, active-request-scorer, predicted-latency-producer, max-score-picker",
+    "Chart: llm-d-router (standalone variant; matches optimized-baseline guide)",
+    "Agent recommendation: PD disagg with predicted-latency producer overlaid (PD-aware via endpointRoleLabel per the producer README). Canonical PD plugin set from pd-disaggregation.values.yaml; no latency-slo-admitter under PD (no published canonical for that combo). WVA autoscaler enabled \u2014 Phase 6 will need a separate `kubectl apply -k` for the WVA operator; this script only handles the EPP layer.",
+    "Cited sources:",
+    "  - https://github.com/llm-d/llm-d/blob/main/guides/pd-disaggregation/router/pd-disaggregation.values.yaml",
+    "  - https://github.com/llm-d/llm-d/blob/main/guides/predicted-latency-routing/README.md",
+    "  - https://github.com/llm-d/llm-d-router/blob/main/pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency/README.md",
+    "disagg-profile-handler.deciderPluginName = always-disagg-pd-decider \u2014 must reference always-disagg-pd-decider for every request to run both PD stages. Verbatim from pd-disaggregation.values.yaml.",
+    "predicted-latency-producer.endpointRoleLabel = llm-d.ai/role \u2014 auto-set under PD so the producer identifies prefill pods and neutralizes their TPOT predictions. Source: predicted-latency-producer README \u00a7'Disaggregated Serving'. Key matches the label set by pd-disaggregation modelserver kustomization.",
+    "prefix-cache-scorer.autoTune = True \u2014 plugin default. Reads vllm:cache_config_info per-pod to size LRUCapacityPerServer (num_gpu_blocks) and BlockSizeTokens (block_size). Verify the model server exports the metric.",
+    "prefix-cache-scorer.maxPrefixTokensToMatch = 131072 \u2014 set to model_context_length=131072. Plugin divides by autoTuned block_size at request time."
+  ],
+  "parameters": [
+    {
+      "name": "disagg-profile-handler.deciderPluginName",
+      "value": "always-disagg-pd-decider",
+      "tier": "T2",
+      "rationale": "must reference always-disagg-pd-decider for every request to run both PD stages. Verbatim from pd-disaggregation.values.yaml."
+    },
+    {
+      "name": "predicted-latency-producer.endpointRoleLabel",
+      "value": "llm-d.ai/role",
+      "tier": "T2",
+      "rationale": "auto-set under PD so the producer identifies prefill pods and neutralizes their TPOT predictions. Source: predicted-latency-producer README \u00a7'Disaggregated Serving'. Key matches the label set by pd-disaggregation modelserver kustomization."
+    },
+    {
+      "name": "prefix-cache-scorer.autoTune",
+      "value": true,
+      "tier": "T3",
+      "rationale": "plugin default. Reads vllm:cache_config_info per-pod to size LRUCapacityPerServer (num_gpu_blocks) and BlockSizeTokens (block_size). Verify the model server exports the metric."
+    },
+    {
+      "name": "prefix-cache-scorer.maxPrefixTokensToMatch",
+      "value": 131072,
+      "tier": "T1",
+      "rationale": "set to model_context_length=131072. Plugin divides by autoTuned block_size at request time."
+    }
+  ],
+  "unresolved_questions": [],
+  "warnings": [
+    "latency-predictor: deploy via the chart toggle `router.latencyPredictor.enabled=true` \u2014 this adds 2 sidecar containers per EPP pod at chart defaults (1 training-server + 1 prediction-server; predictionServers.count is configurable). Resource asks: ~8Gi memory requested / 16Gi limit, ~30Gi emptyDir, ~10 CPU requested. Startup +30-60s. Source: llm-d-router/config/charts/routerlib/values.yaml.",
+    "latency-predictor assumes a homogeneous InferencePool (same GPU/model/serving config across pods). Mixed pools give bad predictions.",
+    "latency-predictor SLO mode uses streamingMode=true on the producer. If non-streaming clients hit this stack they won't contribute to training samples \u2014 set streamingMode=false if your clients don't stream. Source: predicted-latency-slo.values.yaml.",
+    "autoscaler=wva: VariantAutoscaling CRs + WVA operator install are NOT rendered by this script. See guides.workload_autoscaling_wva in feature_docs.yaml for the helmfile to apply alongside the EPP config."
+  ],
+  "errors": []
+}

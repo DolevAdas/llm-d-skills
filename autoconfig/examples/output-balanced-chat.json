@@ -1,0 +1,194 @@
+{
+  "version": "0.3.1",
+  "input_hash": "e3107da0cac74c20",
+  "decisions": {
+    "workload_class": "balanced-conversational",
+    "epp": {
+      "chart": "standalone",
+      "image_tag": "main",
+      "endpoint_picker_config": {
+        "apiVersion": "llm-d.ai/v1alpha1",
+        "kind": "EndpointPickerConfig",
+        "plugins": [
+          {
+            "type": "queue-scorer"
+          },
+          {
+            "type": "kv-cache-utilization-scorer"
+          },
+          {
+            "type": "prefix-cache-scorer",
+            "parameters": {
+              "autoTune": true,
+              "maxPrefixTokensToMatch": 32768
+            }
+          },
+          {
+            "type": "no-hit-lru-scorer",
+            "parameters": {
+              "lruSize": 16
+            }
+          }
+        ],
+        "schedulingProfiles": [
+          {
+            "name": "default",
+            "plugins": [
+              {
+                "pluginRef": "queue-scorer",
+                "weight": 2
+              },
+              {
+                "pluginRef": "kv-cache-utilization-scorer",
+                "weight": 2
+              },
+              {
+                "pluginRef": "prefix-cache-scorer",
+                "weight": 3
+              },
+              {
+                "pluginRef": "no-hit-lru-scorer",
+                "weight": 2
+              }
+            ]
+          }
+        ]
+      },
+      "chart_toggles": {}
+    },
+    "benchmark": {
+      "harness": "guidellm",
+      "harness_image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2",
+      "config": {
+        "endpoint": {
+          "stack_name": "chat-Qwen3-32B",
+          "model": "Qwen/Qwen3-32B",
+          "namespace": "${NAMESPACE}",
+          "base_url": "${IP}",
+          "hf_token_secret": null
+        },
+        "control": {
+          "work_dir": "$HOME/llm-d-bench-work",
+          "kubectl": "kubectl"
+        },
+        "harness": {
+          "name": "guidellm",
+          "results_pvc": "${BENCHMARK_PVC}",
+          "namespace": "${NAMESPACE}",
+          "parallelism": 1,
+          "wait_timeout": 6000,
+          "image": "ghcr.io/llm-d/llm-d-benchmark:v0.5.2"
+        },
+        "workload": {
+          "sanity": {
+            "target": "${IP}",
+            "model": "Qwen/Qwen3-32B",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              1
+            ],
+            "max_seconds": 30,
+            "data": {
+              "prompt_tokens": 1000,
+              "output_tokens": 500
+            }
+          },
+          "sla_validation": {
+            "target": "${IP}",
+            "model": "Qwen/Qwen3-32B",
+            "request_type": "text_completions",
+            "profile": "constant",
+            "rate": [
+              10,
+              20,
+              34
+            ],
+            "max_seconds": 120,
+            "data": {
+              "prompt_tokens_min": 500,
+              "prompt_tokens_max": 1500,
+              "prompt_tokens": 1000,
+              "prompt_tokens_stdev": 100,
+              "output_tokens_min": 250,
+              "output_tokens_max": 750,
+              "output_tokens": 500,
+              "output_tokens_stdev": 50,
+              "samples": 1000
+            },
+            "sla_targets": {
+              "ttft_ms_p95_target": 800,
+              "tpot_ms_p95_target": 25
+            },
+            "_rate_derivation": "workload class balanced-conversational baseline 5.0 req/s/replica \u00d7 8 replicas, adjusted for ISL/OSL \u2192 ~40.0 req/s estimated max; rates are 25%/50%/85% of that"
+          }
+        },
+        "_hf_token_secret": null
+      }
+    },
+    "context": {
+      "namespace": "prod-chat",
+      "release_name": "chat",
+      "deploy_mode": "standalone",
+      "gateway_provider": null,
+      "modelserver_deploy_planned": true,
+      "hf_secret_name": null,
+      "hf_secret_exists": false,
+      "bench_tokenizer_override": null
+    },
+    "features": {
+      "enable_latency_predictor": false,
+      "enable_precise_prefix_cache": false,
+      "enable_tiered_cache": false,
+      "enable_flow_control": false,
+      "enable_wide_ep": false,
+      "enable_inference_objective": false,
+      "enable_model_rewrite": false,
+      "autoscaler": null,
+      "serving_pattern": "sync",
+      "autotune_supported": true
+    },
+    "topology": {
+      "mode": "agg",
+      "replicas": 8,
+      "tp": 2,
+      "prefill_replicas": null,
+      "prefill_tp": null,
+      "decode_replicas": null,
+      "decode_tp": null,
+      "pd_transport": null
+    },
+    "model": "Qwen/Qwen3-32B"
+  },
+  "rationale": [
+    "Topology: agg, replicas=8, tp=2",
+    "Plugin set (4 plugins): queue-scorer, kv-cache-utilization-scorer, prefix-cache-scorer, no-hit-lru-scorer",
+    "Chart: llm-d-router (standalone variant; matches optimized-baseline guide)",
+    "prefix-cache-scorer.autoTune = True \u2014 plugin default. Reads vllm:cache_config_info per-pod to size LRUCapacityPerServer (num_gpu_blocks) and BlockSizeTokens (block_size). Verify the model server exports the metric.",
+    "prefix-cache-scorer.maxPrefixTokensToMatch = 32768 \u2014 set to model_context_length=32768. Plugin divides by autoTuned block_size at request time.",
+    "no-hit-lru-scorer.lruSize = 16 \u2014 max(16, replicas 8 \u00d7 2 = 16). LRU must track all pods with headroom. (Our derivation; upstream default = 1024.)"
+  ],
+  "parameters": [
+    {
+      "name": "prefix-cache-scorer.autoTune",
+      "value": true,
+      "tier": "T3",
+      "rationale": "plugin default. Reads vllm:cache_config_info per-pod to size LRUCapacityPerServer (num_gpu_blocks) and BlockSizeTokens (block_size). Verify the model server exports the metric."
+    },
+    {
+      "name": "prefix-cache-scorer.maxPrefixTokensToMatch",
+      "value": 32768,
+      "tier": "T1",
+      "rationale": "set to model_context_length=32768. Plugin divides by autoTuned block_size at request time."
+    },
+    {
+      "name": "no-hit-lru-scorer.lruSize",
+      "value": 16,
+      "tier": "T4",
+      "rationale": "max(16, replicas 8 \u00d7 2 = 16). LRU must track all pods with headroom. (Our derivation; upstream default = 1024.)"
+    }
+  ],
+  "unresolved_questions": [],
+  "warnings": [],
+  "errors": []
+}
