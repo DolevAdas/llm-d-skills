@@ -1,0 +1,8 @@
+# Python artifacts (autoconfig/ carries a tested Python renderer)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Doc cache populated at runtime by autoconfig's doc_cache.py — fetched copies
+# of upstream docs, regenerated on demand. Never source-controlled.
+autoconfig/skill/*/cache/

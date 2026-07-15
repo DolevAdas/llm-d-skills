@@ -44,7 +44,5 @@ Only if the run is labeled as "baseline" or the user indicates it's a baseline c
 
    Inform the user which label should be used and update the baseline service selector accordingly.
 
-3. **Set baseline base_url**: When configuring the benchmark (in steps 1.2 or 2.2), ensure the config.yaml uses:
-   ```yaml
-   base_url: http://llm-d-baseline-model-server.<namespace>.svc.cluster.local:8000
-   ```
+3. **Set baseline `ENDPOINT_URL`**: When configuring the benchmark (in steps 1.2 or 2.2), ensure it uses endpoint
+   `http://llm-d-baseline-model-server.<namespace>.svc.cluster.local:8000`

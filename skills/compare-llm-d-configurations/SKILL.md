@@ -113,7 +113,8 @@ Store generated files under local directory comparison dir.
 
 Tell the user: *"Stack is up — running benchmark for Run A."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. When the skill asks where to save results, use:
+Follow the **run-llm-d-benchmark** skill workflow, provide it with custom workspace directory `$COMPARISON_DIR/run-a`.
+If Run A is a "no llm-d" baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. When the skill asks where to save results, use:
 
 ```
 $COMPARISON_DIR/run-a/results
@@ -152,10 +153,10 @@ Make sure `results_path` points to the `results` directory created in Step 1.2. 
 Before proceeding to teardown, ensure vLLM pod logs have been collected. The **run-llm-d-benchmark** skill should have collected these during Step 12, but verify they exist:
 
 ```bash
-# Check if logs directory exists and has content
-if [ ! -d "$COMPARISON_DIR/run-a/results/logs" ] || [ -z "$(ls -A $COMPARISON_DIR/run-a/results/logs 2>/dev/null)" ]; then
-  echo "vLLM logs not found in results/logs/ — collecting now before teardown..."
-  mkdir -p $COMPARISON_DIR/run-a/results/logs
+# Check if vllm-logs directory exists and has content
+if [ ! -d "$COMPARISON_DIR/run-a/results/vllm-logs" ] || [ -z "$(ls -A $COMPARISON_DIR/run-a/results/vllm-logs 2>/dev/null)" ]; then
+  echo "vLLM logs not found in vllm-logs/ — collecting now before teardown..."
+  mkdir -p $COMPARISON_DIR/run-a/results/vllm-logs
   
   # Try different label selectors to find vLLM pods
   vllm_pods=$(kubectl get pods -n $NAMESPACE -l app.kubernetes.io/component=vllm -o name 2>/dev/null)
@@ -168,11 +169,11 @@ if [ ! -d "$COMPARISON_DIR/run-a/results/logs" ] || [ -z "$(ls -A $COMPARISON_DI
   
   for pod in $vllm_pods; do
     pod_name=$(echo $pod | sed 's|pod/||')
-    kubectl logs -n $NAMESPACE $pod --timestamps > "$COMPARISON_DIR/run-a/results/logs/${pod_name}.log" 2>&1
+    kubectl logs -n $NAMESPACE $pod --timestamps > "$COMPARISON_DIR/run-a/results/vllm-logs/${pod_name}.log" 2>&1
     echo "Collected logs from $pod_name"
   done
 else
-  echo "vLLM logs already collected in results/logs/"
+  echo "vLLM logs already collected in results/vllm-logs"
 fi
 ```
 
@@ -210,7 +211,8 @@ Store generated files under local directory comparison dir.
 
 Tell the user: *"Stack is up — running benchmark for Run B."*
 
-Follow the **run-llm-d-benchmark** skill workflow, if Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. Results path:
+Follow the **run-llm-d-benchmark** skill workflow, provide it with WORKSPACE_DIR=$COMPARISON_DIR/run-b.
+If Run B is a no llm-d baseline - make sure to use the llm-d-baseline-model-server service as an endpoint in the run configuration. Results path:
 
 ```
 $COMPARISON_DIR/run-b/results
@@ -232,7 +234,7 @@ Same constraints as Phase 1.5: verify logs collected, then remove Helm releases 
 
 ### 3.1 Extract Key Metrics
 
-Read the benchmark result files from both `run-a/results` and `run-b/results`. The exact file format depends on the harness used:
+Locate and read the benchmark result files from both `run-a/results` and `run-b/results` (Look for benchmark dir if needed). The exact file format depends on the harness used:
 
 - **inference-perf** / **vllm-benchmark**: typically CSV or JSON with per-request timing
 - **guidellm**: produces a summary JSON with aggregated percentiles
@@ -289,6 +291,7 @@ Use this structure:
 ---
 
 ## Performance Results
+For throughput: make sure to measure end to end throughput (actual serving capacity) and read actual output length when possible.
 
 | Metric | Run A: <label> | Run B: <label> | Delta (B − A) |
 |---|---|---|---|
@@ -297,6 +300,7 @@ Use this structure:
 | Latency P50 (ms) | | | |
 | Latency P90 (ms) | | | |
 | Latency P99 (ms) | | | |
+| TTFT mean (s) | | | |
 | TTFT P50 (ms) | | | |
 | TTFT P90 (ms) | | | |
 | ITL mean (ms) | | | |
@@ -308,10 +312,14 @@ Use this structure:
 ## Requests errors
 Generate a report of the session requests errors causes.
 
+## Per-Stage Load Ladder
+If the workload contains stages, generate a summary across the full ladder (exclude warmup stages) with: Rate, Run A: <label> Output tokens/sec, Run B: <label> Output tokens/sec, Run A: <label> TTFT mean in s, Run B: <label> TTFT mean in s, Run A: <label> TTFT p90 in s, Run B: <label> TTFT p90 in s
+
 ## KV-Cache Performance Analysis
 Note: If metrics in "actual cache totals" could not be pulled, skip to "time-averaged cache hit rates". If none could be collected, skip the KV-Cache Performance Analysis section.
 
 ### Actual Cache Totals (Authoritative)
+Try to extract "GPU KV cache size" from vllm and mention it.
 Extract from `results/metrics/processed/metrics_summary.json` using cumulative counter totals:
 
 | Metric | Run A: <label> | Run B: <label> | Delta (B − A) | Change (%) |
@@ -395,7 +403,7 @@ The script should:
 - Export all environment variables used (`NAMESPACE`, `BENCHMARK_PVC`, `GATEWAY_SVC`, `RUN_A_LABEL`, `RUN_B_LABEL`, `COMPARISON_DIR`)
 - Echo a header block explaining what the comparison was and when it was generated
 - Show the benchmark config file contents (or the path to the config YAML that was used) for each run, in commented form so it's readable but not executed accidentally
-- Include the actual `run_only.sh` invocation commands used for each run, ready to be uncommented and re-run
+- Include the actual `llmdbenchmark` invocation commands used for each run, ready to be uncommented and re-run
 - Remind the user at the top that this is a reference/reproduction script and they should review it before running
 
 Example structure (fill in actual values from the comparison):
@@ -422,7 +430,7 @@ export COMPARISON_DIR="<absolute path>"
 #
 # To reproduce Run A:
 #   mkdir -p $COMPARISON_DIR/run-a/results
-#   ./run_only.sh -c <path-to-run-a-config.yaml>
+#   llmdbenchmark command
 
 # --- Run B: <RUN_B_LABEL> ---
 # Config used:
@@ -430,7 +438,7 @@ export COMPARISON_DIR="<absolute path>"
 #
 # To reproduce Run B:
 #   mkdir -p $COMPARISON_DIR/run-b/results
-#   ./run_only.sh -c <path-to-run-b-config.yaml>
+#   llmdbenchmark command
 
 # --- Re-generate comparison report ---
 # python $COMPARISON_DIR/analyze_results.py $COMPARISON_DIR

@@ -65,11 +65,26 @@
 - **Solution**: Check kustomization.yaml exists in overlay directory
 - **Solution**: Use full path: `kustomize build ${LLMD_PATH}/guides/<guide>/modelserver/<accelerator>/<server>/`
 
+**Modelserver overlay path 404 / not found (`h100/`, `h200/`, `a100/`, etc.):**
+- **Problem**: A path like `.../modelserver/h100/vllm/` (or `h200/`, `a100/`, `b200/`) returns 404 or "no such directory"
+- **Root Cause**: `modelserver/` is laid out by accelerator **FAMILY**, not by GPU model. All NVIDIA GPUs (H100, H200, A100, B200) share the same `gpu/vllm/` overlay. There is no per-GPU-model granularity.
+- **Solution**: Use the family directory for your accelerator:
+  - NVIDIA GPU → `gpu/vllm/` (with `base/` for vanilla clusters or `gke/` on GKE)
+  - AMD GPU → `amd/vllm/`
+  - Intel XPU → `xpu/vllm/`; Intel Gaudi (HPU) → `hpu/vllm/`
+  - Google TPU → `tpu-v6/vllm/` or `tpu-v7/vllm/`; CPU-only → `cpu/vllm/`
+- **Verify**: `ls ${LLMD_PATH}/guides/<guide>/modelserver/` (or browse https://github.com/llm-d/llm-d/tree/main/guides/optimized-baseline/modelserver) to see the published families
+
 **Namespace not set or incorrect:**
 - **Problem**: Commands fail because namespace not specified
 - **Solution**: Always export NAMESPACE: `export NAMESPACE=your-namespace`
 - **Solution**: Add `-n ${NAMESPACE}` to all kubectl/oc commands
 - **Solution**: Verify current namespace: `kubectl config view --minify | grep namespace`
+
+**RBAC denied during apply:**
+- **Problem**: `kubectl apply`/`helm install` returns `forbidden: User cannot create resource ... in API group ...`
+- **Diagnosis**: `kubectl auth can-i <verb> <resource> -n ${NAMESPACE}` confirms the denial
+- **Solution**: Ask the cluster admin to grant the specific role needed; state the exact RBAC rule in plain language; do not attempt to escalate privileges
 
 ## Runtime Issues
 
@@ -129,6 +144,50 @@
 - **Solution**: Verify resource requests match available resources
 - **Solution**: Check HF token secret exists and is valid
 - **Solution**: If many pods in CrashLoopBackOff, check for pod explosion issue (missing replicas in kustomization.yaml)
+
+**vLLM crashes on OpenShift with `KeyError` / `getpwuid` error (vLLM v0.22+):**
+
+- **Problem**: vLLM pods crash on startup with a traceback involving `getpass.getuser()` / `pwd.getpwuid(os.getuid())`. OpenShift assigns arbitrary UIDs not in `/etc/passwd`, causing a `KeyError`.
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} | grep -i "getpwuid\|KeyError"`
+- **Solution**: Add these env vars and an emptyDir volume to the vLLM container spec:
+  ```yaml
+  env:
+    - name: USER
+      value: vllm
+    - name: HOME
+      value: /.cache
+    - name: TORCHINDUCTOR_CACHE_DIR
+      value: /.cache/torchinductor
+  volumeMounts:
+    - mountPath: /.cache
+      name: torch-compile-cache
+  volumes:
+    - name: torch-compile-cache
+      emptyDir: {}
+  ```
+  `USER=vllm` short-circuits `getpass.getuser()` before it hits `/etc/passwd`. `HOME` and `TORCHINDUCTOR_CACHE_DIR` redirect cache writes to the writable emptyDir.
+
+**vLLM crashes on TP=1 with large models: "KV cache memory insufficient" (ValueError):**
+
+- **Problem**: vLLM pod crashes during engine init with `ValueError: ... KV cache is needed, which is larger than the available KV cache memory`. On TP=1, a 60B+ model leaves only ~2-3 GiB for KV cache — too little for the model's default max seq len (e.g. 131072 tokens).
+- **Diagnosis**: `kubectl logs <pod> -n ${NAMESPACE} --previous | grep -E "KV cache|ValueError|Available"`
+- **Solution**: Cap `--max-model-len` to your actual workload needs (e.g. 8192 for ISL≤5000 + OSL≤500):
+  ```yaml
+  args:
+    - "--max-model-len=8192"
+    - "--gpu-memory-utilization=0.90"
+  ```
+- **Note**: Affects all TP=1 pods (including prefill in P/D disaggregation). TP=2+ shards the model across GPUs and typically has enough headroom.
+
+**Pod OOMKilled during model loading:**
+- **Problem**: Pod exits with `OOMKilled`, often during initial model download/loading
+- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows `Reason: OOMKilled`; check `resources.limits.memory`
+- **Solution**: Increase the model server container's `resources.limits.memory` (e.g. ~80Gi is typical for a 32B model on H100)
+
+**ImagePullBackOff:**
+- **Problem**: Pod stuck in `ImagePullBackOff`
+- **Diagnosis**: `kubectl describe pod <pod> -n ${NAMESPACE}` shows the pull error — typically `unauthorized`, `not found`, or `manifest unknown`
+- **Solution**: Verify the image tag exists; for a private registry, ensure `imagePullSecrets` is set on the pod spec
 
 **Pods pending:**
 - Check GPU availability: `kubectl describe nodes | grep nvidia.com/gpu`
