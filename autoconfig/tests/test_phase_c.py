@@ -247,7 +247,7 @@ class PhaseCBundleRendererTest(unittest.TestCase):
     def test_tiered_cache_emits_advisory_not_kustomization(self) -> None:
         # The tiered-cache overlay forks by tier/accelerator/connector, so the
         # script can't emit one valid Kustomization. It emits a comment-only
-        # advisory instead (no kubectl-applyable resource).
+        # advisory instead (no kubectl-applicable resource).
         from autoconfig_poc import Features, render_bundle
         out = build_output(Input(
             model="some-model",
