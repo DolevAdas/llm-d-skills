@@ -80,11 +80,11 @@ The default profile matches canonical order. The chart toggle `router.latencyPre
 
 ### `tiered-prefix-cache` 🟡
 
-`features.enable_tiered_cache=true` emits a comment-only advisory in the bundle (and a warning), not an applyable resource. The upstream overlay forks by tier (CPU RAM vs disk/shared storage), accelerator, and connector (`base` / `lmcache-connector` / `offloading-connector`), so there's no single overlay the script can pick for the user. The advisory names the choice and points at `guides.tiered_prefix_cache` with an example path; the user applies the chosen overlay after the modelservice base. EPP-side impact is a single tunable (`lruCapacityPerServer`); the heavy lift is modelserver-side and is not auto-rendered.
+`features.enable_tiered_cache=true` emits a comment-only advisory in the bundle (and a warning), not an applicable resource. The upstream overlay forks by tier (CPU RAM vs disk/shared storage), accelerator, and connector (`base` / `lmcache-connector` / `offloading-connector`), so there's no single overlay the script can pick for the user. The advisory names the choice and points at `guides.tiered_prefix_cache` with an example path; the user applies the chosen overlay after the modelservice base. EPP-side impact is a single tunable (`lruCapacityPerServer`); the heavy lift is modelserver-side and is not auto-rendered.
 
 ### `wide-ep-lws` 🟡
 
-`features.enable_wide_ep=true` emits a comment-only advisory in the bundle (and a warning), not an applyable resource. Wide-EP needs LeaderWorkerSet and only makes sense for sparse-MoE models (DeepSeek, Mixtral, etc.); the script doesn't auto-detect MoE, so the user opts in. The upstream overlay forks by accelerator and infra (`base` / `gke` / `coreweave` / ...), so the advisory names the choice and points at `guides.wide_ep_lws` with an example path rather than picking one. EP/TP/DP topology suggestion is not implemented — the user picks.
+`features.enable_wide_ep=true` emits a comment-only advisory in the bundle (and a warning), not an applicable resource. Wide-EP needs LeaderWorkerSet and only makes sense for sparse-MoE models (DeepSeek, Mixtral, etc.); the script doesn't auto-detect MoE, so the user opts in. The upstream overlay forks by accelerator and infra (`base` / `gke` / `coreweave` / ...), so the advisory names the choice and points at `guides.wide_ep_lws` with an example path rather than picking one. EP/TP/DP topology suggestion is not implemented — the user picks.
 
 ### `flow-control` 🟡
 

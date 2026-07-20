@@ -650,7 +650,7 @@ class ParseBenchResultsTest(unittest.TestCase):
         )
         # Should parse without raising, but the format is incomplete →
         # _normalize_guidellm returns None for missing keys → exit 2.
-        # The point of this test: brace-walk doesn't crash or mis-count.
+        # The point of this test: brace-walk doesn't crash or miss-count.
         code, _, _ = self._run(text)
         self.assertIn(code, (0, 2))  # parses successfully; format may not validate
 
