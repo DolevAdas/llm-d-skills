@@ -15,6 +15,7 @@ In the case of Claude code, skills residing in `.claude/skills/` at the project 
 
 | Skill | Description |
 |-------|-------------|
+| [create-gke-infra-llm-d](skills/create-gke-infra-llm-d/) | Create or prepare GKE infrastructure (cluster, GPU node pools, RDMA/RoCE networking, DRA/DRANET drivers, Gateway API prerequisites) so llm-d can be deployed on it. |
 | [deploy-llm-d](skills/deploy-llm-d/) | Configure and deploy llm-d on existing Kubernetes and OpenShift clusters. |
 | [teardown-llm-d](skills/teardown-llm-d/) | Tear down, remove, clean up, or undeploy a deployed llm-d stack. |
 | [run-llm-d-benchmark](skills/run-llm-d-benchmark/) | Run a benchmark workload against an already deployed llm-d stack using llm-d-benchmark tooling. |
@@ -31,6 +32,7 @@ The single-purpose skills above each do **one** operation you already know you w
 
 | You want to… | Use |
 |---|---|
+| Create or prepare the GKE cluster itself (GPU node pools, RDMA/RoCE, DRA/DRANET) | [`create-gke-infra-llm-d`](skills/create-gke-infra-llm-d/) |
 | Decide *what* llm-d config fits a workload + SLA, then stand it up from scratch | **autoconfig** |
 | Deploy/verify/customize a config you already know | [`deploy-llm-d`](skills/deploy-llm-d/) |
 | Benchmark an already-deployed stack | [`run-llm-d-benchmark`](skills/run-llm-d-benchmark/) |
