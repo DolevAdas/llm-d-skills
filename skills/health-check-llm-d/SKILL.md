@@ -247,19 +247,13 @@ If the script prints a **"fewer than 3 responsive pods"** note for a group *and 
 
 ---
 
-## Step 8 (Optional): Reset KV Cache
+## Step 8: Reset KV Cache (Always Ask)
 
-After reporting results, ask the user:
+Always ask the user at the end of every run — the health check sends requests that populate the cache:
 
-> "Would you like to reset the KV cache on all pods now? This is useful before a benchmark run to ensure a clean cache state."
+> "The health check populated the KV cache. Would you like to reset it now?"
 
-**Wait for explicit confirmation before proceeding.** If the user says yes, invoke the `clear-kv-cache-tiers-in-llm-d-deployment` skill — it handles all cache tier variants (GPU-only, GPU+CPU, 3-tier GPU+CPU+FS) and both unified and disaggregated PD deployments:
-
-```
-/clear-kv-cache-tiers-in-llm-d-deployment
-```
-
-Pass the `NAMESPACE` already resolved in Step 1 so the cache-reset skill does not need to re-ask. If the user says no or does not respond, skip this step entirely — it is never run automatically.
+Wait for the user's answer. If yes, invoke the `clear-kv-cache-tiers-in-llm-d-deployment` skill, passing the `NAMESPACE` from Step 1. If no, stop.
 
 ---
 
