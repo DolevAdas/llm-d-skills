@@ -62,7 +62,7 @@ That guide covers, among others: HuggingFace token / auth failures, pod `OOMKill
 ### NIXL silent TCP fallback (PD)
 - **Symptom:** PD prefill + decode pods start cleanly; throughput is worse than agg on the same hardware. EPP routes correctly, but inter-pod latency is dominated by KV transfer time.
 - **Diagnosis:** the cluster has no RDMA/RoCE wired (no DPv2, no `Network` CRs, no `rdma/ib` resource on GPU nodes). NIXL falls back to TCP for KV transfer over the standard pod network — orders of magnitude slower than RoCE/Infiniband.
-- **Fix:** acceptable if you knew this going in (the autoconfig script's TCP-transport warning surfaced it in Phase 5). For RDMA, recreate the cluster with DPv2 + multi-networking + `--additional-node-network` flags (see GCP "AI Hypercompute custom cluster" docs); the gke/ overlay is then sufficient.
+- **Fix:** acceptable if you knew this going in (the autoconfig script's TCP-transport warning surfaced it in Phase 5). For RDMA, recreate the cluster with DPv2 + multi-networking + `--additional-node-network` flags (see GCP "AI Hypercompute custom cluster" docs); the gke/ overlay is then sufficient. On GKE, the [`create-gke-infra-llm-d` skill](../../../../skills/create-gke-infra-llm-d/) automates this cluster recreation (both the DRA/DRANET and the multi-networking paths).
 
 ### gIB NCCL tuner crash on GKE (PD)
 - **Symptom:** prefill or decode pod CrashLoopBackOff right after vLLM starts. Logs show `NCCL WARN No NCCL_TUNER_CONFIG_PATH provided` followed by `NCCL error: internal error - please report this issue to the NCCL developers`.
