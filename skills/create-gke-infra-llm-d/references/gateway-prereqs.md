@@ -10,6 +10,11 @@ Sources:
 * GCP: [Deploying Gateways](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/deploying-gateways)
 * GCP: [Deploy GKE Inference Gateway](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/deploy-gke-inference-gateway)
 
+IAM: enabling the Gateway API needs `roles/container.admin`; creating the proxy-only
+subnet needs `roles/compute.networkAdmin`. See "Required IAM Roles" in SKILL.md.
+Enabling the Gateway API is one of the two permitted mutations of an existing cluster
+(see "Guardrails" in SKILL.md) - confirm with the user before running it.
+
 ## Step 1: Enable the Gateway API on the cluster
 
 ```bash

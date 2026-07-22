@@ -37,10 +37,50 @@ If `LLMD_PATH` is set (or an llm-d clone is found nearby), prefer reading the lo
 
 ## Prerequisites
 
-* `gcloud` CLI authenticated with permissions to create networks, clusters, and node pools in the target project
+* `gcloud` CLI authenticated with the IAM roles listed below for the chosen path
 * `kubectl` and `helm` installed
 * Tested configurations (from the llm-d GKE guide): machine types A3, A4, ct5p, ct5lp, ct6e; GKE 1.33.4+
 * Version floors from GCP docs: managed DRANET needs GKE Standard 1.34.1-gke.1829001+; GPU DRA setup targets GKE 1.35+; RDMA needs 1.32.2-gke.1475000+ (A4) or 1.31.4-gke.1183000+ (A3 Ultra); nodes must run Container-Optimized OS
+
+### Required IAM Roles
+
+This is a cluster-level skill and must run under an identity with cluster-level and (for Path B) network-level permissions. Kubernetes Engine Admin alone is NOT sufficient for every path. Per the [GKE IAM docs](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/iam) and [Compute Engine IAM docs](https://docs.cloud.google.com/compute/docs/access/iam), the per-path minimums on the target project are:
+
+| Operation | Required role |
+|---|---|
+| Create/update clusters and node pools, `get-credentials`, all `kubectl`/`helm` steps (driver DaemonSets, DRA driver chart, Network CRs, CRDs) | **Kubernetes Engine Admin** (`roles/container.admin`) - "full management of clusters and their Kubernetes API objects" |
+| Attach the node service account when creating clusters/node pools | **Service Account User** (`roles/iam.serviceAccountUser`) on the node service account (the Compute Engine default SA unless a custom one is used) |
+| Create VPCs and subnets (Path B Step 1; gateway proxy-only subnet) | **Compute Network Admin** (`roles/compute.networkAdmin`) |
+| Create the firewall rule (Path B Step 1) | **Compute Security Admin** (`roles/compute.securityAdmin`) - firewall rules are excluded from Network Admin |
+
+Per-path summary:
+
+* **Path A (DRA + DRANET):** `roles/container.admin` + `roles/iam.serviceAccountUser`. No `gcloud compute` create commands are issued by the caller; the accelerator VPCs/subnets are auto-configured by GKE via `--accelerator-network-profile=auto`.
+* **Path B (multi-networking + gIB):** Path A roles + `roles/compute.networkAdmin` + `roles/compute.securityAdmin`.
+* **Gateway prerequisites (optional step):** `roles/container.admin` (Gateway API enablement) + `roles/compute.networkAdmin` (proxy-only subnet).
+
+**Preflight (mandatory).** Before creating anything, verify the active identity and surface it to the user:
+
+```bash
+gcloud config list --format="value(core.account, core.project)"
+gcloud projects get-iam-policy ${PROJECT} \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:$(gcloud config get-value account 2>/dev/null)" \
+  --format="value(bindings.role)"
+```
+
+If the roles above (or broader equivalents such as Owner/Editor) are missing for the chosen path, STOP and report exactly which role is missing and which step needs it, instead of failing midway with orphaned resources. Note that org policies may further constrain these operations; a preflight pass does not guarantee every call succeeds, so treat mid-run permission errors as a stop-and-report event, never as a prompt to escalate privileges yourself.
+
+### Guardrails for Cluster-Level Changes
+
+This skill intentionally operates at cluster level, which is exactly why its write scope is contractual:
+
+1. **Create-only.** The skill creates NEW resources (VPCs, subnets, firewall rules, clusters, node pools, driver installs, CRs). It never modifies or deletes pre-existing infrastructure: no editing existing node pools, no changing existing VPCs/subnets/firewall rules, no upgrading or reconfiguring an existing cluster's settings.
+2. **Exactly two documented mutations of existing clusters are allowed**, both opt-in and confirmed with the user first: adding a node pool to a Dataplane V2 cluster, and enabling the Gateway API (`--gateway-api=standard`).
+3. **Kubernetes writes are limited to the documented installs**: the NVIDIA driver DaemonSet, the DRA driver Helm release (its own new namespace), `Network`/`GKENetworkParamSet` CRs, and Gateway/GAIE CRDs. Never touch existing workloads, namespaces, RBAC, or storage.
+4. **Announce-before-create and cost confirmation** (see the notice at the top of this skill) apply to every resource, with machine type, node count, and capacity model confirmed explicitly for GPU pools.
+5. **No unsolicited teardown.** Deletion happens only when the user asks, only for resources this skill created in this engagement, listed item by item and confirmed before each command (see Teardown).
+6. **Shared-cluster caution.** If the target cluster has existing workloads (any non-system namespace), say so and get explicit confirmation before adding node pools or installing cluster-scoped drivers/CRDs, since those are visible cluster-wide.
 
 ## Step 1: Establish the Target and Choose a Networking Path
 

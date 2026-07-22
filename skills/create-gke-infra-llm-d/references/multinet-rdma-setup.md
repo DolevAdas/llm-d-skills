@@ -11,6 +11,12 @@ Sources:
 * `${LLMD_PATH}/docs/infrastructure/providers/gke/README.md` (A3/A4 guidance, gIB versions, workload configuration)
 * `${LLMD_PATH}/docs/infrastructure/rdma/README.md` (GKE platform notes)
 
+> [!NOTE]
+> IAM: this path issues `gcloud compute networks|subnets|firewall-rules create` commands
+> and therefore needs `roles/compute.networkAdmin` and `roles/compute.securityAdmin` in
+> addition to the cluster roles. See "Required IAM Roles" in SKILL.md and run the
+> preflight before starting.
+
 > [!WARNING]
 > Do not enable managed DRANET (`cloud.google.com/gke-networking-dra-driver=true` /
 > `--accelerator-network-profile=auto`) on a cluster using this path. Per the GCP DRANET
