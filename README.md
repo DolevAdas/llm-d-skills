@@ -11,6 +11,30 @@ All skills adhere to the Anthropics skills template and can be copied into a cod
 In the case of Claude code, skills residing in `.claude/skills/` at the project root will be automatically available for the code assistant. 
 
 
+## Installation
+
+### Claude Code plugin marketplace (recommended)
+
+This repository is a Claude Code plugin marketplace. Installing the `llm-d-skills` plugin makes every skill below available in any project, with no copying of files:
+
+```
+/plugin marketplace add llm-d-incubation/llm-d-skills
+/plugin install llm-d-skills@llm-d
+```
+
+The skills are namespaced by the plugin, so they appear as `llm-d-skills:deploy-llm-d`, `llm-d-skills:run-llm-d-benchmark`, and so on. You can also invoke them directly, for example `/llm-d-skills:deploy-llm-d`, or just describe your task and let the assistant pick the matching skill.
+
+The plugin is versioned by commit, so new and updated skills reach users as soon as they land on `main`. Refresh with:
+
+```
+/plugin marketplace update llm-d
+/plugin update llm-d-skills@llm-d
+```
+
+### Manual install
+
+Alternatively, copy any skill directory from [`skills/`](skills/) into `.claude/skills/` in your project (or `~/.claude/skills/` for all projects).
+
 ## Skills Index
 
 | Skill | Description |

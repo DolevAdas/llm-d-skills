@@ -1,0 +1,39 @@
+{
+  "name": "llm-d",
+  "description": "Agent skills for deploying, benchmarking, and tuning llm-d on Kubernetes and OpenShift.",
+  "owner": {
+    "name": "llm-d",
+    "url": "https://github.com/llm-d-incubation/llm-d-skills"
+  },
+  "plugins": [
+    {
+      "name": "llm-d-skills",
+      "displayName": "llm-d Skills",
+      "source": "./",
+      "description": "Deploy, benchmark, compare, autoscale, and tear down llm-d stacks, plus autoconfig for choosing an EPP configuration from a workload and SLA.",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      },
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills",
+      "repository": "https://github.com/llm-d-incubation/llm-d-skills",
+      "license": "Apache-2.0",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "kubernetes",
+        "openshift",
+        "vllm",
+        "inference",
+        "benchmark",
+        "kv-cache",
+        "autoscaling",
+        "gke"
+      ],
+      "skills": [
+        "./skills",
+        "./autoconfig/skill"
+      ]
+    }
+  ]
+}
