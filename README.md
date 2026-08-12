@@ -15,21 +15,31 @@ In the case of Claude code, skills residing in `.claude/skills/` at the project 
 
 ### Claude Code plugin marketplace (recommended)
 
-This repository is a Claude Code plugin marketplace. Installing the `llm-d-skills` plugin makes every skill below available in any project, with no copying of files:
+This repository is a Claude Code plugin marketplace. Each skill is published as its own plugin, so you install only the ones you need:
 
 ```
 /plugin marketplace add llm-d-incubation/llm-d-skills
-/plugin install llm-d-skills@llm-d
 ```
 
-The skills are namespaced by the plugin, so they appear as `llm-d-skills:deploy-llm-d`, `llm-d-skills:run-llm-d-benchmark`, and so on. You can also invoke them directly, for example `/llm-d-skills:deploy-llm-d`, or just describe your task and let the assistant pick the matching skill.
-
-The plugin is versioned by commit, so new and updated skills reach users as soon as they land on `main`. Refresh with:
+Then install any subset:
 
 ```
-/plugin marketplace update llm-d
-/plugin update llm-d-skills@llm-d
+/plugin install deploy-llm-d@llm-d
+/plugin install run-llm-d-benchmark@llm-d
+/plugin install teardown-llm-d@llm-d
 ```
+
+Or install all of them at once:
+
+```
+/plugin install llm-d-all@llm-d
+```
+
+You can also browse and pick them interactively with `/plugin`.
+
+Every skill in the [Skills Index](#skills-index) below is a plugin of the same name, plus `llm-d-autoconfig` from [`autoconfig/`](autoconfig/). `compare-llm-d-configurations` drives the deploy, benchmark, and teardown skills, so installing it pulls in `deploy-llm-d`, `run-llm-d-benchmark`, and `teardown-llm-d` automatically.
+
+New and updated skills reach users as soon as they land on `main`, with no release step.
 
 ### Manual install
 
@@ -45,6 +55,7 @@ Alternatively, copy any skill directory from [`skills/`](skills/) into `.claude/
 | [run-llm-d-benchmark](skills/run-llm-d-benchmark/) | Run a benchmark workload against an already deployed llm-d stack using llm-d-benchmark tooling. |
 | [compare-llm-d-configurations](skills/compare-llm-d-configurations/) | Compare the benchmark performance of two llm-d stack configurations end-to-end. |
 | [configure-wva-autoscaling-llm-d](skills/configure-wva-autoscaling-llm-d/) | Configure and optimize Workload Variant Autoscaler (WVA) for llm-d inference deployments. |
+| [clear-kv-cache-tiers-in-llm-d-deployment](skills/clear-kv-cache-tiers-in-llm-d-deployment/) | Clear all KV / prefix cache tiers (GPU, CPU, and FS offload) on every vLLM pod for a clean benchmarking state. |
 
 ## Autoconfig
 
