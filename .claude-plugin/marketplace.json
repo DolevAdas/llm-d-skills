@@ -7,33 +7,204 @@
   },
   "plugins": [
     {
-      "name": "llm-d-skills",
-      "displayName": "llm-d Skills",
+      "name": "llm-d-all",
       "source": "./",
-      "description": "Deploy, benchmark, compare, autoscale, and tear down llm-d stacks, plus autoconfig for choosing an EPP configuration from a workload and SLA.",
+      "skills": [],
+      "description": "Install every llm-d skill at once. Ships no skills of its own, it only pulls in the eight individual plugins, so it can be combined with them without duplicating anything.",
+      "category": "devops",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills",
       "author": {
         "name": "llm-d",
         "url": "https://github.com/llm-d-incubation"
       },
-      "homepage": "https://github.com/llm-d-incubation/llm-d-skills",
-      "repository": "https://github.com/llm-d-incubation/llm-d-skills",
+      "dependencies": [
+        "create-gke-infra-llm-d",
+        "llm-d-autoconfig",
+        "deploy-llm-d",
+        "run-llm-d-benchmark",
+        "compare-llm-d-configurations",
+        "configure-wva-autoscaling-llm-d",
+        "clear-kv-cache-tiers-in-llm-d-deployment",
+        "teardown-llm-d"
+      ]
+    },
+    {
+      "name": "create-gke-infra-llm-d",
+      "source": "./",
+      "skills": [
+        "./skills/create-gke-infra-llm-d"
+      ],
+      "description": "Create or prepare GKE infrastructure (cluster, GPU node pools, RDMA/RoCE networking, DRA and DRANET drivers, Gateway API prerequisites) so that an llm-d stack can be deployed on it. Use this skill when users want to provision a new GKE cluster for llm-d, or make an existing GKE cluster llm-d-ready, especially for prefill/decode disaggregation or wide expert parallelism which require RDMA. Stops at a cluster that is ready for llm-d: install deploy-llm-d (config already decided) or llm-d-autoconfig (config to be recommended) to deploy onto it.",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "gke",
+        "kubernetes",
+        "gpu",
+        "rdma"
+      ],
       "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/create-gke-infra-llm-d",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
+    },
+    {
+      "name": "llm-d-autoconfig",
+      "source": "./",
+      "skills": [
+        "./autoconfig/skill/llm-d-autoconfig"
+      ],
+      "description": "Configure an EPP EndpointPickerConfig for an llm-d deployment based on workload + SLA inputs, then optionally deploy it to the user's cluster. Activate when the user asks about configuring llm-d, setting up the inference scheduler, tuning EPP plugins, choosing what config to use for a model or workload, or deploying llm-d. Owns config generation and its own deploy path; install the single-purpose plugins (deploy-llm-d, run-llm-d-benchmark, teardown-llm-d, configure-wva-autoscaling-llm-d) for standalone operations on a config you already have.",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "epp",
+        "scheduler",
+        "configuration",
+        "sla"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/autoconfig",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
+    },
+    {
+      "name": "deploy-llm-d",
+      "source": "./",
+      "skills": [
+        "./skills/deploy-llm-d"
+      ],
+      "description": "Configure and deploy an llm-d stack on an existing Kubernetes and OpenShift cluster using Well-Lit Path guides. Use this skill when users want to deploy, verify, or customize llm-d.",
       "category": "devops",
       "keywords": [
         "llm-d",
         "kubernetes",
         "openshift",
         "vllm",
-        "inference",
-        "benchmark",
-        "kv-cache",
-        "autoscaling",
-        "gke"
+        "deploy"
       ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/deploy-llm-d",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
+    },
+    {
+      "name": "run-llm-d-benchmark",
+      "source": "./",
       "skills": [
-        "./skills",
-        "./autoconfig/skill"
+        "./skills/run-llm-d-benchmark"
+      ],
+      "description": "Benchmark an already-deployed llm-d stack using the llmdbenchmark CLI, either following a named guide (e.g. optimized-baseline, pd-disaggregation) or using a custom workload profile against any inference endpoint. Use it to measure performance (TTFT, throughput, ITL), validate a deployment under load, or run inference-perf/guidellm/vllm-benchmark. Expects an endpoint to already exist; install deploy-llm-d if you also need to stand one up.",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "benchmark",
+        "performance",
+        "vllm"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/run-llm-d-benchmark",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
+    },
+    {
+      "name": "compare-llm-d-configurations",
+      "source": "./",
+      "skills": [
+        "./skills/compare-llm-d-configurations"
+      ],
+      "description": "Compare the benchmark performance of two llm-d stack configurations end-to-end. For each configuration, deploys the stack, runs a benchmark, tears down, then generates a side-by-side results comparison. If one configuration was already benchmarked previously, only the new one is deployed and benchmarked, and its results are compared against the existing ones. Use it to A/B test llm-d configurations, compare against a baseline with no llm-d Inference Scheduler, compare models or serving strategies, evaluate the effect of a configuration change, or compare a new run against a previous one. Drives the deploy, benchmark, and teardown skills directly, so installing it also installs deploy-llm-d, run-llm-d-benchmark, and teardown-llm-d.",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "benchmark",
+        "comparison",
+        "performance"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/compare-llm-d-configurations",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      },
+      "dependencies": [
+        "deploy-llm-d",
+        "run-llm-d-benchmark",
+        "teardown-llm-d"
       ]
+    },
+    {
+      "name": "configure-wva-autoscaling-llm-d",
+      "source": "./",
+      "skills": [
+        "./skills/configure-wva-autoscaling-llm-d"
+      ],
+      "description": "Configure and deploy Workload Variant Autoscaler (WVA) for llm-d inference deployments. Guides users through namespace selection, WVA repo location, configuration (with presets or custom values), deployment via Makefile + kubectl apply, and verification. Produces a reusable deployment script.",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "autoscaling",
+        "wva",
+        "hpa",
+        "kubernetes"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/configure-wva-autoscaling-llm-d",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
+    },
+    {
+      "name": "clear-kv-cache-tiers-in-llm-d-deployment",
+      "source": "./",
+      "skills": [
+        "./skills/clear-kv-cache-tiers-in-llm-d-deployment"
+      ],
+      "description": "Clears all KV / prefix cache tiers (GPU, CPU, and FS offload) on every vLLM pod in an llm-d deployment for a clean state, including both roles of a disaggregated prefill/decode setup. Use it to flush the cache, reset vLLM state, or start fresh before a test run. Prefers the /reset_prefix_cache API and falls back to pod restart. Acts on an already deployed stack; pairs with run-llm-d-benchmark for clean-cache benchmark runs.",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "kv-cache",
+        "vllm",
+        "benchmark"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/clear-kv-cache-tiers-in-llm-d-deployment",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
+    },
+    {
+      "name": "teardown-llm-d",
+      "source": "./",
+      "skills": [
+        "./skills/teardown-llm-d"
+      ],
+      "description": "Tears down, removes, cleans up, or undeploys a deployed llm-d stack on Kubernetes: remove an llm-d deployment, clean up a namespace after inference workloads, uninstall helm releases for llm-d, or free up cluster resources used by llm-d. Also handles partial cleanup (e.g. remove only the model service, keep the gateway). Supports both Helm-based and Kustomize-based deployments.",
+      "category": "devops",
+      "keywords": [
+        "llm-d",
+        "teardown",
+        "cleanup",
+        "kubernetes"
+      ],
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/llm-d-incubation/llm-d-skills/tree/main/skills/teardown-llm-d",
+      "author": {
+        "name": "llm-d",
+        "url": "https://github.com/llm-d-incubation"
+      }
     }
   ]
 }
