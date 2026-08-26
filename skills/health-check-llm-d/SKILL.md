@@ -102,26 +102,32 @@ Probing a pod directly (via its own port-forward) bypasses the llm-d routing lay
 
 ## Step 3: Determine the Model Name
 
-Extract the model name from the first pod's environment variables:
+Capture the model name into `MODEL_NAME` from the first pod's environment variables:
 ```bash
-kubectl get pod <first-pod> -n $NAMESPACE -o json | \
+# First pod, portably (bash arrays are 0-indexed, zsh 1-indexed — don't use ${PODS[0]}).
+for FIRST_POD in "${PODS[@]}"; do break; done
+
+MODEL_NAME=$(kubectl get pod "$FIRST_POD" -n $NAMESPACE -o json | \
   python3 -c "
 import sys, json
 d = json.load(sys.stdin)
 envs = {e['name']: e.get('value','') for c in d['spec']['containers'] for e in c.get('env',[])}
-print(envs.get('MODEL_ID') or envs.get('MODEL_NAME') or envs.get('VLLM_MODEL','<not found>'))
-"
+print(envs.get('MODEL_ID') or envs.get('MODEL_NAME') or envs.get('VLLM_MODEL',''))
+")
+echo "detected MODEL_NAME='$MODEL_NAME'"
 ```
 
-If that returns empty, briefly port-forward the first pod to query `/v1/models`:
+If `MODEL_NAME` came back empty, briefly port-forward the first pod to query `/v1/models`:
 ```bash
-kubectl port-forward pod/<first-pod> 18000:8000 -n $NAMESPACE &
+kubectl port-forward "pod/$FIRST_POD" 18000:8000 -n $NAMESPACE &
 PF_PID=$!; sleep 2
-curl -s http://localhost:18000/v1/models | python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['id'])"
+MODEL_NAME=$(curl -s http://localhost:18000/v1/models | \
+  python3 -c "import sys,json; print(json.load(sys.stdin)['data'][0]['id'])")
 kill $PF_PID 2>/dev/null; wait $PF_PID 2>/dev/null
+echo "detected MODEL_NAME='$MODEL_NAME'"
 ```
 
-Show the detected model name to the user and confirm before proceeding.
+Show `MODEL_NAME` to the user and confirm before proceeding.
 
 ---
 
@@ -137,6 +143,14 @@ Confirm these parameters with the user, using defaults if they don't want to cha
 | API type | `chat` | `chat` for instruct/chat models; `completions` for base models with no chat template |
 
 The probe sends the **same** prompt set to every pod (fair comparison), discards one warmup request per pod (avoids cold-start bias), and measures both TTFT and TPOT.
+
+Set the parameters as shell variables (defaults shown — override any per the table above), so the probe command in Step 5 can reference them:
+```bash
+REQUESTS=8
+MAX_TOKENS=50
+PEER_THRESHOLD=2.0
+API=chat          # use 'completions' for base models without a chat template
+```
 
 With 8 requests and 4 concurrent per pod, a full check across a handful of pods typically completes in under 3 minutes.
 
@@ -171,7 +185,7 @@ sleep 5
 
 ### 5b: Run the probe script
 
-Substitute the absolute path to this skill's `scripts/` directory. Pass the `POD_GROUPS` built in Step 2b via `--groups` so each parallelism group is evaluated on its own. Add `--api completions` if the model has no chat template.
+Substitute the absolute path to this skill's `scripts/` directory. Pass the `POD_GROUPS` built in Step 2b via `--groups` so each parallelism group is evaluated on its own. The `$API` set in Step 4 selects `chat` (instruct models) vs `completions` (base models with no chat template).
 
 ```bash
 python3 /abs/path/to/skills/health-check-llm-d/scripts/gpu-health-probe.py \
@@ -181,7 +195,8 @@ python3 /abs/path/to/skills/health-check-llm-d/scripts/gpu-health-probe.py \
   --model "$MODEL_NAME" \
   --requests $REQUESTS \
   --max-tokens $MAX_TOKENS \
-  --threshold $PEER_THRESHOLD
+  --threshold $PEER_THRESHOLD \
+  --api "$API"
 PROBE_EXIT=$?
 ```
 
