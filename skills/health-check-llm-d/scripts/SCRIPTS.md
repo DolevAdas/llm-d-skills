@@ -1,22 +1,44 @@
 # Scripts
 
+Two scripts work together. `detect-pod-config.py` figures out which pods are true peers (same role + parallelism) and emits the group labels; `gpu-health-probe.py` probes the pods and compares each one only against others in its group.
+
+## detect-pod-config.py
+
+Reads `kubectl get pods -o json` (a List or a single Pod) on **stdin** and prints one `<pod_name>\t<group_label>` line per pod on **stdout**, plus a human-readable summary on **stderr**. The label combines the pod's role with its parallelism, e.g. `decode-tp4`, `decode-tp2`, `prefill-tp2`, `decode-tp2-dp2`.
+
+Why: pods with different parallelism do different amounts of work per request, so they have different latency baselines. A `tp=4` pod and a `tp=2` pod must be checked as separate groups, never against each other. Feeding this script's label column into `gpu-health-probe.py --groups` guarantees that split.
+
+**Detection sources**, in order of trust:
+1. Container `command`/`args` — `--tensor-parallel-size=N`, `-tp N`, `--data-parallel-size`, `--pipeline-parallel-size` (also parsed out of a single shell-string `bash -c "vllm serve … "`).
+2. Container env vars — `TENSOR_PARALLEL_SIZE`, `DATA_PARALLEL_SIZE`, `PIPELINE_PARALLEL_SIZE`.
+3. `nvidia.com/gpu` limit — fallback for TP when no flag is present.
+
+Role is taken from the `llm-d.ai/role` / `app.kubernetes.io/role` label, else a `prefill`/`decode` substring in the pod name, else the owning workload name.
+
+**Requirements**: Python 3.6+, stdlib only. Needs only `get`/`list` on pods — no `exec`.
+
+```bash
+kubectl get pods -n $NAMESPACE "${PODS[@]}" -o json \
+  | python3 scripts/detect-pod-config.py > /tmp/pod-groups.tsv
+# stdout (tsv):        decode-6f7c9b8d5-xq2mn <TAB> decode-tp4
+# stderr (summary):    decode-6f7c9b8d5-xq2mn -> decode-tp4  (tp=4 [explicit], gpus/pod=4)
+```
+
 ## gpu-health-probe.py
 
-Sends an identical set of randomized requests to one or more vLLM pod endpoints, measures **time-to-first-token (TTFT)** and **time-per-output-token (TPOT)** per pod, and flags outliers in two independent ways:
+Sends an identical set of randomized requests to one or more vLLM pod endpoints, measures **time-to-first-token (TTFT)** and **time-per-output-token (TPOT)** per pod, and flags outliers against their peers in the same `--groups` label.
 
-- **vs peers** — slower than other pods in the same `--groups` label (one run).
-- **vs history** — slower than this same GPU's own past runs recorded in a local `--history` JSON file. This is what makes a **single-GPU** deployment checkable: a lone pod with no peers is still compared against its own recorded baseline.
+**Note on TP/DP:** With Tensor Parallelism or internal Data Parallelism, each pod uses multiple GPUs. This script detects pod-level anomalies (a TP/DP group underperforming), not individual GPU anomalies. Pair it with `detect-pod-config.py` so pods of different parallelism land in different `--groups`.
 
 **Requirements**: Python 3.6+, stdlib only (no pip installs needed).
 
 ### How it makes the comparison fair
 
-- **Same prompts for every pod** — the prompt list is drawn once (fixed seed) and reused, so prompt-length variance can't be mistaken for a GPU difference.
+- **Same prompts for every pod** — the prompt list is drawn once (fixed seed) and reused, so prompt-length variance can't be mistaken for a performance difference.
 - **Warmup discarded** — one request per pod is sent and thrown away to absorb cold-start cost (CUDA graph capture / lazy init).
 - **Group-aware** — prefill and decode pods have different latency baselines, so each pod is only compared against others in its `--groups` label.
-- **Stable identity for history** — history is keyed by `--gpu-ids` (node name, ideally plus GPU UUID) + model + max_tokens, never by the ephemeral pod name.
-- **Baselines from healthy runs only** — a run where a GPU was flagged is stored with its SUSPICIOUS status and excluded from future baselines, so a bad run can't poison the comparison.
-- **Two signals + absolute floor** — TTFT and TPOT; an outlier must exceed both the multiplicative threshold *and* a small wall-clock gap, preventing false positives when latency is tiny.
+- **Two signals + absolute floor** — TTFT and TPOT; an outlier must exceed both the multiplicative threshold *and* a small wall-clock gap (scaled to the group median), preventing false positives when latency is tiny.
+- **TPOT re-probe** — pods flagged on TPOT are re-probed with a fresh batch; only persistent TPOT elevation is confirmed (transient memory-pressure spikes are cleared).
 
 ### Arguments
 
@@ -24,53 +46,21 @@ Sends an identical set of randomized requests to one or more vLLM pod endpoints,
 |------|----------|---------|-------------|
 | `--endpoints` | yes | — | Space-separated local endpoint URLs (e.g. `http://localhost:18001 ...`) |
 | `--pod-names` | yes | — | Pod names in the same order as `--endpoints` |
-| `--gpu-ids` | for history | pod names | Stable GPU identity per pod (same order), e.g. `node-a:GPU-uuid`. Required for `--history` to be meaningful |
 | `--groups` | no | one group | Group label per pod, e.g. `decode decode prefill`. Pods are compared only within their group |
 | `--model` | yes | — | Model ID as served by vLLM (must match exactly) |
 | `--requests` | no | 8 | Timed requests per pod (≥ 1); one extra warmup request is discarded |
 | `--max-tokens` | no | 50 | Max tokens generated per request |
 | `--threshold` | no | 2.0 | Peer outlier: flag if mean TTFT or TPOT `> threshold × group median` |
-| `--drift-threshold` | no | 1.5 | History drift: flag if TTFT or TPOT `> drift-threshold × this GPU's baseline` |
 | `--api` | no | `chat` | `chat` (→ `/v1/chat/completions`) or `completions` (→ `/v1/completions`, for base models) |
-| `--history` | no | off | Path to a per-cluster JSON history file. Enables drift detection and records this run |
-| `--cluster` | no | `unknown` | Cluster identifier stored inside the history file |
-| `--timestamp` | no | now | ISO timestamp for this run (mainly for testing/reproducibility) |
-
-### Drift detection details
-
-- A GPU needs at least **2 prior HEALTHY runs** (same gpu-id + model + max_tokens) before drift is evaluated; earlier runs only build the baseline.
-- Baseline = median of those runs' median TTFT/TPOT (median-of-medians, robust to a single noisy run).
-- The history file is created if absent. If it exists but is unparseable, the script **warns and skips** both drift comparison and recording (never overwrites, to avoid data loss).
-
-### History file shape
-
-```json
-{
-  "schema_version": 1,
-  "cluster": "my-cluster",
-  "runs": [
-    {
-      "timestamp": "2026-07-13T10:00:00",
-      "model": "meta-llama/Llama-3.1-70B-Instruct",
-      "max_tokens": 50,
-      "api": "chat",
-      "pods": [
-        {"pod_name": "llm-d-decode-7d9f-xq2mn", "gpu_id": "worker-3:GPU-abc123",
-         "group": "decode", "n_ok": 8,
-         "ttft_median": 0.031, "tpot_median": 0.011,
-         "ttft_mean": 0.032, "tpot_mean": 0.011, "status": "HEALTHY"}
-      ]
-    }
-  ]
-}
-```
+| `--request-timeout` | no | 15 | Per-request HTTP timeout in seconds |
+| `--no-confirm-tpot` | no | off | Skip TPOT re-probe confirmation (faster, but may flag transient spikes) |
 
 ### Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | All pods HEALTHY |
-| 1 | One or more pods SUSPICIOUS or UNHEALTHY (vs peers and/or vs history) |
+| 1 | One or more pods SUSPICIOUS or UNHEALTHY (vs peers) |
 | 2 | Fatal: no successful responses, or bad arguments |
 
 ### Example
@@ -79,35 +69,34 @@ Sends an identical set of randomized requests to one or more vLLM pod endpoints,
 python3 scripts/gpu-health-probe.py \
   --endpoints http://localhost:18001 http://localhost:18002 \
   --pod-names llm-d-decode-a llm-d-decode-b \
-  --gpu-ids worker-3:GPU-abc123 worker-4:GPU-def456 \
   --groups decode decode \
   --model meta-llama/Llama-3.1-70B-Instruct \
-  --requests 8 --max-tokens 50 --threshold 2.0 --drift-threshold 1.5 \
-  --history ~/.llm-d-health-check/my-cluster.json --cluster my-cluster
+  --requests 8 --max-tokens 50 --threshold 2.0
 ```
 
-### Sample output — a single GPU that regressed vs its own history
+### Sample output — one pod slower than its peers
 
 ```
-GPU health check
+Pod health check
   model     : Llama-3.1-70B
   api       : /v1/chat/completions
   requests  : 8 per pod (4 concurrent), 1 warmup discarded
   max_tokens: 50
-  peers     : flag > 2.0x group median
-  history   : ~/.llm-d-health-check/my-cluster.json (2 prior run(s)); flag > 1.5x own baseline
+  peers     : flag > 2.0x group median, floor=15% of median
+  tpot check: re-probe to confirm (transient spikes cleared)
 
-  Probing llm-d-decode-7d9f-xq2mn                  ... ok  (8/8 ok, TTFT=0.124s, TPOT=0.048s)
+  Probing llm-d-decode-a                           ... ok  (8/8 ok, TTFT=0.031s, TPOT=0.011s)
+  Probing llm-d-decode-b                           ... ok  (8/8 ok, TTFT=0.031s, TPOT=0.011s)
+  Probing llm-d-decode-c                           ... ok  (8/8 ok, TTFT=0.124s, TPOT=0.048s)
 
 ====================================================================================
   Pod                                     TTFT      TPOT  Status
 ------------------------------------------------------------------------------------
-  group 'decode'  (median TTFT=0.124s, TPOT=0.048s)  [<3 pods: peer detection weak]
-  llm-d-decode-7d9f-xq2mn               0.124s    0.048s  [ SUSPICIOUS (TTFT 4.0x vs history; TPOT 4.4x vs history) ]
+  group 'decode'  (median TTFT=0.031s, TPOT=0.011s)
+  llm-d-decode-a                        0.031s    0.011s  [ HEALTHY ]
+  llm-d-decode-b                        0.031s    0.011s  [ HEALTHY ]
+  llm-d-decode-c                        0.124s    0.048s  [ SUSPICIOUS (TTFT 4.0x vs peers; TPOT 4.4x vs peers) ]
 ====================================================================================
-
-History baselines (median of prior HEALTHY runs for this GPU):
-  llm-d-decode-7d9f-xq2mn [worker-3:GPU-abc123]: TTFT now 0.124s / base 0.031s ; TPOT now 0.048s / base 0.011s
 
 One or more pods flagged. Suggested next steps:
   1. Check GPU/CUDA errors in flagged pod logs:
@@ -115,5 +104,3 @@ One or more pods flagged. Suggested next steps:
   2. Check node GPU allocation:
      kubectl describe node <node> | grep -A10 'Allocated resources'
 ```
-
-The pod name here is ephemeral, but the GPU identity `worker-3:GPU-abc123` is stable — that's how the regression is caught across runs even though the pod was recreated.
