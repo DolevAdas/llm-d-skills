@@ -11,7 +11,7 @@ Validate that all pods in a deployed llm-d stack are performing comparably by pr
 
 A pod is flagged when its latency is a significant outlier among **its true peers** — other pods that do the exact same amount of work (**vs peers**, a single run).
 
-> **Peers = same role AND same parallelism.** Because pods with different parallelism have different latency baselines by design (a `tp=4` pod spreads each request across 4 GPUs, a `tp=2` pod across 2), this skill auto-detects each pod's parallelism and groups pods by `(role, TP, DP, PP)`, running the outlier check independently within each group. So a `tp=4` group and a `tp=2` group in the same deployment are tested separately, never against each other.
+> **Peers = same GPU hardware, same role, same parallelism.** Only pods on the same GPU model, in the same role, with the same TP/DP/PP share a latency baseline — an A100 differs from an H100, and a `tp=4` pod spreads each request across more GPUs than a `tp=2` pod. So the skill auto-detects all three, groups pods by `(GPU model, role, TP, DP, PP)`, and runs the outlier check independently within each group — never across groups.
 >
 > Because each pod is a multi-GPU unit, a flag is a **pod-level** signal (that TP/DP group as a whole is slow) — not a specific-GPU signal. Isolating which GPU inside the pod is at fault needs further investigation (e.g. `nvidia-smi` on the node).
 
@@ -36,7 +36,7 @@ If pods are not all in `Running`/`Ready` state, stop and tell the user to wait f
 
 ---
 
-## Step 2: Discover Inference Pods and Group Them by Parallelism
+## Step 2: Discover Inference Pods and Group Them by Hardware + Parallelism
 
 ### 2a: Find all vLLM pods
 
@@ -58,16 +58,26 @@ printf 'pod: %s\n' "${PODS[@]}"
 ```
 > If that selector returns nothing, fall back to `-l app=vllm` or ask the user how their vLLM pods are labeled.
 
-### 2b: Auto-group pods by role + parallelism
+### 2b: Auto-group pods by GPU hardware + role + parallelism
 
-Prefill vs decode pods, and pods with different TP/DP/PP sizes, have **different latency baselines** and must be compared only against pods with the **same configuration**. Use `scripts/detect-pod-config.py` to read each pod's spec and assign a group label combining role and parallelism (e.g. `decode-tp4`, `decode-tp2`, `prefill-tp2`):
+Pods are only comparable to peers on the **same GPU hardware**, in the **same role**, with the **same parallelism** — different GPU models (A100 vs H100), prefill vs decode, and different TP/DP/PP sizes all have different latency baselines by design. `scripts/detect-pod-config.py` assigns each pod a group label leading with the GPU model, e.g. `A100-SXM4-80GB-decode-tp4`, `H100-80GB-HBM3-decode-tp2`.
+
+GPU hardware comes from the pod's node labels, so fetch the nodes too (best-effort — needs read access to nodes):
 
 ```bash
-# Fetch the specs of exactly the pods discovered above, then label each one.
-# The tsv is <pod>\t<group_label> on stdout; the human summary is on stderr.
-kubectl get pods -n $NAMESPACE "${PODS[@]}" -o json \
-  | python3 /abs/path/to/skills/health-check-llm-d/scripts/detect-pod-config.py \
-  > /tmp/pod-groups.tsv
+# Fetch the specs of exactly the pods discovered above.
+kubectl get pods -n $NAMESPACE "${PODS[@]}" -o json > /tmp/hc-pods.json
+
+# Fetch the nodes those pods run on, for GPU-hardware grouping (the primary
+# dimension). If node read access is denied, this falls back to '{}' and the
+# detector groups by role+parallelism only, printing a note.
+NODE_NAMES=$(kubectl get pods -n $NAMESPACE "${PODS[@]}" \
+  -o jsonpath='{.items[*].spec.nodeName}' | tr ' ' '\n' | sort -u | tr '\n' ' ')
+kubectl get nodes $NODE_NAMES -o json > /tmp/hc-nodes.json 2>/dev/null || echo '{}' > /tmp/hc-nodes.json
+
+# Label each pod. tsv is <pod>\t<group_label> on stdout; human summary on stderr.
+python3 /abs/path/to/skills/health-check-llm-d/scripts/detect-pod-config.py \
+  --nodes /tmp/hc-nodes.json < /tmp/hc-pods.json > /tmp/pod-groups.tsv
 
 # Rebuild PODS and POD_GROUPS TOGETHER from the tsv so they stay aligned.
 # NOTE: do NOT name the group array GROUPS — GROUPS is a reserved bash variable.
@@ -82,11 +92,11 @@ done < /tmp/pod-groups.tsv
 paste <(printf '%s\n' "${PODS[@]}") <(printf '%s\n' "${POD_GROUPS[@]}")
 ```
 
-**Show the user the detected groups** (from the detector's stderr summary) before probing — e.g. "2 pods in `decode-tp4`, 2 pods in `decode-tp2`; these two groups will be tested separately." The detector reads `--tensor-parallel-size` / `--data-parallel-size` / `--pipeline-parallel-size` from the container args or command, falls back to env vars (`TENSOR_PARALLEL_SIZE`, …), and finally to the pod's `nvidia.com/gpu` count. If the detected grouping looks wrong, the user can override any label in `POD_GROUPS` by hand.
+**Show the user the detected groups** (from the detector's stderr summary) before probing — e.g. "2 pods in `A100-SXM4-80GB-decode-tp2`, 1 pod in `H100-80GB-HBM3-decode-tp4`; each group is tested separately." Detection sources: GPU model from node label `nvidia.com/gpu.product` (falls back to instance-type, else `unknown-gpu`); TP/DP/PP from container args/command → env vars → `nvidia.com/gpu` count. If the detected grouping looks wrong, the user can override any label in `POD_GROUPS` by hand.
 
-Probing a pod directly (via its own port-forward) bypasses the disaggregation routing and exercises that pod on its own — exactly what we want for a per-pod health check. `POD_GROUPS` is passed to the probe script via `--groups` (Step 5).
+> **If GPU hardware could not be detected** (the detector prints a `NOTE: no GPU-hardware info` line — e.g. node read access was denied), tell the user the check will group by role+parallelism only and **must not** be trusted across pods that might be on different GPU models. Offer to have them supply the hardware split manually.
 
-> **Note on the node column:** the `-o wide` NODE column maps each pod to a physical node, useful when investigating a flagged pod. For a fully unified deployment where every pod is identical, all pods land in one group — that's fine.
+Probing a pod directly (via its own port-forward) bypasses the llm-d routing layer and exercises that pod on its own — exactly what we want for a per-pod health check. `POD_GROUPS` is passed to the probe script via `--groups` (Step 5).
 
 ---
 
@@ -277,6 +287,7 @@ Wait for the user's answer. If yes, invoke the `clear-kv-cache-tiers-in-llm-d-de
 - `kubectl` configured with access to the cluster
 - Python 3.6+ available locally (stdlib only — no pip installs needed)
 - The llm-d stack must already be deployed with all pods in `Running` state
+- Optional but recommended: read access to `nodes` (for GPU-hardware grouping via node labels). Without it, the check groups by role+parallelism only and cannot separate different GPU models.
 
 ---
 

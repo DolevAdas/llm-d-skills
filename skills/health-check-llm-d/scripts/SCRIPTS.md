@@ -4,24 +4,27 @@ Two scripts work together. `detect-pod-config.py` figures out which pods are tru
 
 ## detect-pod-config.py
 
-Reads `kubectl get pods -o json` (a List or a single Pod) on **stdin** and prints one `<pod_name>\t<group_label>` line per pod on **stdout**, plus a human-readable summary on **stderr**. The label combines the pod's role with its parallelism, e.g. `decode-tp4`, `decode-tp2`, `prefill-tp2`, `decode-tp2-dp2`.
+Reads `kubectl get pods -o json` (a List or a single Pod) on **stdin** and prints one `<pod_name>\t<group_label>` line per pod on **stdout**, plus a human-readable summary on **stderr**. The label leads with the GPU model, then role, then parallelism, e.g. `A100-SXM4-80GB-decode-tp4`, `H100-80GB-HBM3-decode-tp2`, `H100-80GB-HBM3-prefill-tp2-dp2`.
 
-Why: pods with different parallelism do different amounts of work per request, so they have different latency baselines. A `tp=4` pod and a `tp=2` pod must be checked as separate groups, never against each other. Feeding this script's label column into `gpu-health-probe.py --groups` guarantees that split.
+Why: pods are comparable only to peers that do the same work on the same hardware. Different GPU models (A100 vs H100) and different parallelism (a `tp=4` pod vs a `tp=2` pod) both have different latency baselines, so they must be checked as separate groups. Feeding this script's label column into `gpu-health-probe.py --groups` guarantees that split.
+
+**Argument:** `--nodes <file>` (recommended) — path to `kubectl get nodes -o json`. Enables GPU-hardware grouping (the primary dimension). Omit it and the label is `<role>-tp<N>` only, with a `NOTE` warning on stderr not to compare across GPU models.
 
 **Detection sources**, in order of trust:
-1. Container `command`/`args` — `--tensor-parallel-size=N`, `-tp N`, `--data-parallel-size`, `--pipeline-parallel-size` (also parsed out of a single shell-string `bash -c "vllm serve … "`).
-2. Container env vars — `TENSOR_PARALLEL_SIZE`, `DATA_PARALLEL_SIZE`, `PIPELINE_PARALLEL_SIZE`.
-3. `nvidia.com/gpu` limit — fallback for TP when no flag is present.
+- **GPU model** — node label `nvidia.com/gpu.product` (GPU Operator / NFD, e.g. `NVIDIA-A100-SXM4-80GB`), else `node.kubernetes.io/instance-type`, else `unknown-gpu`. Requires `--nodes`.
+- **TP/DP/PP** — container `command`/`args` (`--tensor-parallel-size=N`, `-tp N`, `--data-parallel-size`, `--pipeline-parallel-size`; also parsed out of a single shell-string `bash -c "vllm serve … "`) → env vars (`TENSOR_PARALLEL_SIZE`, …) → `nvidia.com/gpu` limit as a fallback for TP.
+- **Role** — `llm-d.ai/role` / `app.kubernetes.io/role` label, else a `prefill`/`decode` substring in the pod name, else the owning workload name.
 
-Role is taken from the `llm-d.ai/role` / `app.kubernetes.io/role` label, else a `prefill`/`decode` substring in the pod name, else the owning workload name.
-
-**Requirements**: Python 3.6+, stdlib only. Needs only `get`/`list` on pods — no `exec`.
+**Requirements**: Python 3.6+, stdlib only. Needs `get`/`list` on pods and (for hardware grouping) on nodes — no `exec`.
 
 ```bash
+NODE_NAMES=$(kubectl get pods -n $NAMESPACE "${PODS[@]}" \
+  -o jsonpath='{.items[*].spec.nodeName}' | tr ' ' '\n' | sort -u | tr '\n' ' ')
+kubectl get nodes $NODE_NAMES -o json > /tmp/hc-nodes.json 2>/dev/null || echo '{}' > /tmp/hc-nodes.json
 kubectl get pods -n $NAMESPACE "${PODS[@]}" -o json \
-  | python3 scripts/detect-pod-config.py > /tmp/pod-groups.tsv
-# stdout (tsv):        decode-6f7c9b8d5-xq2mn <TAB> decode-tp4
-# stderr (summary):    decode-6f7c9b8d5-xq2mn -> decode-tp4  (tp=4 [explicit], gpus/pod=4)
+  | python3 scripts/detect-pod-config.py --nodes /tmp/hc-nodes.json > /tmp/pod-groups.tsv
+# stdout (tsv):     decode-6f7c9b8d5-xq2mn <TAB> A100-SXM4-80GB-decode-tp4
+# stderr (summary): decode-6f7c9b8d5-xq2mn -> A100-SXM4-80GB-decode-tp4 (gpu=A100-SXM4-80GB, node=worker-3, tp=4 [explicit], gpus/pod=4)
 ```
 
 ## gpu-health-probe.py
